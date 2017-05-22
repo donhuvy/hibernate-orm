@@ -22,6 +22,8 @@ import org.hibernate.dialect.identity.MySQLIdentityColumnSupport;
 import org.hibernate.dialect.pagination.AbstractLimitHandler;
 import org.hibernate.dialect.pagination.LimitHandler;
 import org.hibernate.dialect.pagination.LimitHelper;
+import org.hibernate.dialect.unique.MySQLUniqueDelegate;
+import org.hibernate.dialect.unique.UniqueDelegate;
 import org.hibernate.engine.spi.RowSelection;
 import org.hibernate.exception.LockAcquisitionException;
 import org.hibernate.exception.LockTimeoutException;
@@ -43,6 +45,9 @@ import org.hibernate.type.StandardBasicTypes;
 @SuppressWarnings("deprecation")
 public class MySQLDialect extends Dialect {
 
+	private final UniqueDelegate uniqueDelegate;
+	private MySQLStorageEngine storageEngine;
+
 	private static final LimitHandler LIMIT_HANDLER = new AbstractLimitHandler() {
 		@Override
 		public String processSql(String sql, RowSelection selection) {
@@ -61,6 +66,24 @@ public class MySQLDialect extends Dialect {
 	 */
 	public MySQLDialect() {
 		super();
+
+		String storageEngine = Environment.getProperties().getProperty( Environment.STORAGE_ENGINE );
+		if(storageEngine == null) {
+			storageEngine = System.getProperty( Environment.STORAGE_ENGINE );
+		}
+		if(storageEngine == null) {
+			this.storageEngine = getDefaultMySQLStorageEngine();
+		}
+		else if( "innodb".equals( storageEngine.toLowerCase() ) ) {
+			this.storageEngine = InnoDBStorageEngine.INSTANCE;
+		}
+		else if( "myisam".equals( storageEngine.toLowerCase() ) ) {
+			this.storageEngine = MyISAMStorageEngine.INSTANCE;
+		}
+		else {
+			throw new UnsupportedOperationException( "The " + storageEngine + " storage engine is not supported!" );
+		}
+
 		registerColumnType( Types.BIT, "bit" );
 		registerColumnType( Types.BIGINT, "bigint" );
 		registerColumnType( Types.SMALLINT, "smallint" );
@@ -196,6 +219,8 @@ public class MySQLDialect extends Dialect {
 
 		getDefaultProperties().setProperty( Environment.MAX_FETCH_DEPTH, "2" );
 		getDefaultProperties().setProperty( Environment.STATEMENT_BATCH_SIZE, DEFAULT_BATCH_SIZE );
+
+		uniqueDelegate = new MySQLUniqueDelegate( this );
 	}
 
 	protected void registerVarcharTypes() {
@@ -302,11 +327,6 @@ public class MySQLDialect extends Dialect {
 	@Override
 	public String getSelectGUIDString() {
 		return "select uuid()";
-	}
-
-	@Override
-	public boolean supportsCascadeDelete() {
-		return false;
 	}
 
 	@Override
@@ -423,6 +443,11 @@ public class MySQLDialect extends Dialect {
 	}
 
 	@Override
+	public UniqueDelegate getUniqueDelegate() {
+		return uniqueDelegate;
+	}
+
+	@Override
 	public boolean supportsRowValueConstructorSyntax() {
 		return true;
 	}
@@ -529,5 +554,33 @@ public class MySQLDialect extends Dialect {
 	@Override
 	public boolean isJdbcLogWarningsEnabledByDefault() {
 		return false;
+	}
+
+	@Override
+	public boolean supportsCascadeDelete() {
+		return storageEngine.supportsCascadeDelete();
+	}
+
+	@Override
+	public String getTableTypeString() {
+		return storageEngine.getTableTypeString( getEngineKeyword());
+	}
+
+	protected String getEngineKeyword() {
+		return "type";
+	}
+
+	@Override
+	public boolean hasSelfReferentialForeignKeyBug() {
+		return storageEngine.hasSelfReferentialForeignKeyBug();
+	}
+
+	@Override
+	public boolean dropConstraints() {
+		return storageEngine.dropConstraints();
+	}
+
+	protected MySQLStorageEngine getDefaultMySQLStorageEngine() {
+		return MyISAMStorageEngine.INSTANCE;
 	}
 }

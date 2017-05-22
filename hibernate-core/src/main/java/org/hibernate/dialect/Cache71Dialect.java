@@ -198,7 +198,7 @@ import org.hibernate.type.StandardBasicTypes;
 
 public class Cache71Dialect extends Dialect {
 
-	private final TopLimitHandler limitHandler;
+	private LimitHandler limitHandler;
 
 	/**
 	 * Creates new <code>Cache71Dialect</code> instance. Sets up the JDBC /
@@ -208,7 +208,7 @@ public class Cache71Dialect extends Dialect {
 		super();
 		commonRegistration();
 		register71Functions();
-		this.limitHandler = new TopLimitHandler(true, true);
+		this.limitHandler = new TopLimitHandler( true, true );
 	}
 
 	protected final void commonRegistration() {
@@ -431,7 +431,7 @@ public class Cache71Dialect extends Dialect {
 
 	@Override
 	public boolean dropConstraints() {
-		// Do we need to drop constraints beforeQuery dropping tables in this dialect?
+		// Do we need to drop constraints before dropping tables in this dialect?
 		return true;
 	}
 
@@ -516,7 +516,7 @@ public class Cache71Dialect extends Dialect {
 	@Override
 	public LockingStrategy getLockingStrategy(Lockable lockable, LockMode lockMode) {
 		// InterSystems Cache' does not current support "SELECT ... FOR UPDATE" syntax...
-		// Set your transaction mode to READ_COMMITTED beforeQuery using
+		// Set your transaction mode to READ_COMMITTED before using
 		if ( lockMode==LockMode.PESSIMISTIC_FORCE_INCREMENT) {
 			return new PessimisticForceIncrementLockingStrategy( lockable, lockMode);
 		}
@@ -544,6 +544,9 @@ public class Cache71Dialect extends Dialect {
 
 	@Override
 	public LimitHandler getLimitHandler() {
+		if ( isLegacyLimitHandlerBehaviorEnabled() ) {
+			return super.getLimitHandler();
+		}
 		return limitHandler;
 	}
 

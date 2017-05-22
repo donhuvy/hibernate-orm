@@ -6,25 +6,24 @@
  */
 package org.hibernate.test.hql;
 
-/**
- * @author Andrea Boriero
- */
-
 import javax.persistence.ElementCollection;
 import javax.persistence.Embeddable;
 import javax.persistence.Entity;
 import javax.persistence.GeneratedValue;
 import javax.persistence.Id;
+import javax.persistence.OneToMany;
 import javax.persistence.Table;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-import org.hibernate.Session;
+import org.hibernate.HibernateException;
 import org.hibernate.query.Query;
-import org.hibernate.resource.transaction.spi.TransactionStatus;
 
-import org.junit.After;
+import org.hibernate.testing.TestForIssue;
 import org.junit.Test;
 
 import org.hibernate.testing.junit4.BaseCoreFunctionalTestCase;
@@ -34,16 +33,20 @@ import static org.hamcrest.core.Is.is;
 import static org.hibernate.testing.junit4.ExtraAssertions.assertTyping;
 import static org.hibernate.testing.transaction.TransactionUtil.doInHibernate;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 /**
  * @author Andrea Boriero
+ * @author Christian Beikov
  */
 public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestCase {
-	private final KeyValue keyValue = new KeyValue();
+	private final KeyValue keyValue = new KeyValue( "key1" );
+	private final EmbeddableValue embeddableValue = new EmbeddableValue( 3 );
 
 	@Override
 	protected Class<?>[] getAnnotatedClasses() {
 		return new Class[] {
+				BaseTestEntity.class,
 				TestEntity.class,
 				KeyValue.class
 		};
@@ -54,21 +57,23 @@ public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestC
 		doInHibernate( this::sessionFactory, s -> {
 			s.save( keyValue );
 
+			BaseTestEntity baseTestEntity1 = new BaseTestEntity();
 			TestEntity testEntity = new TestEntity();
-			EmbeddableValue embeddableValue = new EmbeddableValue();
-			embeddableValue.value = 3;
 			Map<KeyValue, EmbeddableValue> map = new HashMap<>();
 			map.put( keyValue, embeddableValue );
 			testEntity.values = map;
 			s.save( testEntity );
+			baseTestEntity1.entities = new HashSet<TestEntity>();
+			baseTestEntity1.entities.add( testEntity );
+			s.save( baseTestEntity1 );
 
-			KeyValue keyValue2 = new KeyValue();
+			KeyValue keyValue2 = new KeyValue( "key2" );
 			s.save( keyValue2 );
+			BaseTestEntity baseTestEntity2 = new BaseTestEntity();
+			s.save( baseTestEntity2 );
 			TestEntity testEntity2 = new TestEntity();
-			EmbeddableValue embeddableValue2 = new EmbeddableValue();
-			embeddableValue2.value = 3;
 			Map<KeyValue, EmbeddableValue> map2 = new HashMap<>();
-			map.put( keyValue2, embeddableValue2 );
+			map2.put( keyValue2, embeddableValue );
 			testEntity2.values = map2;
 			s.save( testEntity2 );
 		} );
@@ -78,8 +83,7 @@ public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestC
 	public void testMapKeyExpressionInWhere() {
 		doInHibernate( this::sessionFactory, s -> {
 			// JPA form
-			Query query = s.createQuery(
-					"select te from TestEntity te join te.values v where ? in (key(v)) " );
+			Query query = s.createQuery( "select te from TestEntity te join te.values v where ? in (key(v)) " );
 			query.setParameter( 0, keyValue );
 
 			assertThat( query.list().size(), is( 1 ) );
@@ -89,6 +93,44 @@ public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestC
 			query.setParameter( 0, keyValue );
 
 			assertThat( query.list().size(), is( 1 ) );
+
+			// Test key property dereference
+			query = s.createQuery( "select te from TestEntity te join te.values v where key(v).name in :names" );
+			query.setParameterList( "names", Arrays.asList( keyValue.name ) );
+			assertThat( query.list().size(), is( 1 ) );
+		} );
+	}
+
+	@Test
+	@TestForIssue(jiraKey = "HHH-10577")
+	public void testMapValueExpressionInWhere() {
+		doInHibernate( this::sessionFactory, s -> {
+			// JPA form
+			try {
+				Query query = s.createQuery( "select te from TestEntity te join te.values v where ? in (value(v))" );
+				query.setParameter( 0, new EmbeddableValue( 3 ) );
+				assertThat( query.list().size(), is( 2 ) );
+				fail( "HibernateException expected - Could not determine type for EmbeddableValue" );
+			}
+			catch ( Exception e ) {
+				assertTyping( HibernateException.class, e );
+			}
+
+			// Hibernate additional form
+			try {
+				Query query = s.createQuery( "select te from TestEntity te where ? in (value(te.values))" );
+				query.setParameter( 0, new EmbeddableValue( 3 ) );
+				assertThat( query.list().size(), is( 2 ) );
+				fail( "HibernateException expected - Could not determine type for EmbeddableValue" );
+			}
+			catch ( Exception e ) {
+				assertTyping( HibernateException.class, e );
+			}
+
+			// Test value property dereference
+			Query query = s.createQuery( "select te from TestEntity te join te.values v where value(v).value in :values" );
+			query.setParameterList( "values", Arrays.asList( 3 ) );
+			assertThat( query.list().size(), is( 2 ) );
 		} );
 	}
 
@@ -133,9 +175,42 @@ public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestC
 		} );
 	}
 
+	@Test
+	@TestForIssue(jiraKey = "HHH-10577")
+	public void testMapKeyExpressionDereferenceInSelect() {
+		doInHibernate( this::sessionFactory, s -> {
+			List<String> keyValueNames = s.createQuery( "select key(v).name as name from TestEntity te join te.values v order by name", String.class ).list();
+			assertEquals( 2, keyValueNames.size() );
+			assertEquals( "key1", keyValueNames.get( 0 ) );
+			assertEquals( "key2", keyValueNames.get( 1 ) );
+		} );
+	}
+
+	@Test
+	@TestForIssue(jiraKey = "HHH-10537")
+	public void testLeftJoinMapAndUseKeyExpression() {
+		doInHibernate( this::sessionFactory, s -> {
+			// Assert that a left join is used for joining the map key entity table
+			List keyValues= s.createQuery( "select key(v) from BaseTestEntity bte left join bte.entities te left join te.values v" ).list();
+			System.out.println( keyValues );
+			assertEquals( 2, keyValues.size() );
+		} );
+	}
+
 	@Override
 	protected boolean isCleanupTestDataRequired() {
 		return true;
+	}
+
+	@Entity(name = "BaseTestEntity")
+	@Table(name = "BASE_TEST_ENTITY")
+	public static class BaseTestEntity {
+		@Id
+		@GeneratedValue
+		Long id;
+
+		@OneToMany
+		Set<TestEntity> entities;
 	}
 
 	@Entity(name = "TestEntity")
@@ -155,10 +230,27 @@ public class CollectionMapWithComponentValueTest extends BaseCoreFunctionalTestC
 		@Id
 		@GeneratedValue
 		Long id;
+
+		String name;
+
+		public KeyValue() {
+		}
+
+		public KeyValue(String name) {
+			this.name = name;
+		}
 	}
 
 	@Embeddable
 	public static class EmbeddableValue {
 		Integer value;
+
+		EmbeddableValue() {
+
+		}
+
+		EmbeddableValue(Integer value) {
+			this.value = value;
+		}
 	}
 }

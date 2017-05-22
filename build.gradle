@@ -32,7 +32,8 @@ buildscript {
 }
 
 plugins {
-	id 'com.gradle.build-scan' version '1.1.1'
+	id 'com.gradle.build-scan' version '1.3'
+	id 'me.champeau.buildscan-recipes' version '0.1.7'
 }
 
 apply plugin: 'eclipse'
@@ -57,8 +58,8 @@ allprojects {
 }
 
 ext {
-	hibernateTargetVersion = '5.2.4-SNAPSHOT'
-	expectedGradleVersion = '3.0-milestone-1'
+	hibernateTargetVersion = '5.2.11-SNAPSHOT'
+	expectedGradleVersion = '3.2.1'
 	baselineJavaVersion = '1.8'
 
     osgiExportVersion = hibernateTargetVersion.replaceAll( '-SNAPSHOT', '.SNAPSHOT' )
@@ -85,6 +86,8 @@ idea {
 def osgiDescription() {
 	return "A module of the Hibernate O/RM project"
 }
+
+buildDir = "target"
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -154,6 +157,7 @@ subprojects { subProject ->
 
 		testRuntime( libraries.log4j )
 		testRuntime( libraries.javassist )
+		testRuntime( libraries.byteBuddy )
 		testRuntime( libraries.woodstox )
 
 		//Databases
@@ -162,18 +166,21 @@ subprojects { subProject ->
 		testRuntime( libraries.postgresql )
 		testRuntime( libraries.mysql )
 		testRuntime( libraries.mariadb )
+		testRuntime( libraries.mssql )
 		testRuntime( libraries.informix )
+
 		if (db.equalsIgnoreCase("oracle")) {
 			dependencies {
-				testRuntime( libraries.oracle )
+				testRuntime( libraries.oracle ) {
+					exclude group: 'com.oracle.jdbc', module: 'xmlparserv2'
+				}
 			}
 		}
-		if (db.equalsIgnoreCase("mssql")) {
+		if (db.equalsIgnoreCase("db2")) {
 			dependencies {
-				testRuntime( libraries.mssql )
+				testRuntime( libraries.db2 )
 			}
 		}
-
 		// 6.6 gave me some NPE problems from within checkstyle...
 		checkstyle 'com.puppycrawl.tools:checkstyle:6.5'
 	}
@@ -190,6 +197,12 @@ subprojects { subProject ->
 
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// compilation
+	compileJava.options.encoding = 'UTF-8'
+
+	tasks.withType(JavaCompile) {
+		options.encoding = 'UTF-8'
+	}
+
 	task compile
 	compile.dependsOn compileJava, processResources, compileTestJava, processTestResources
 
@@ -358,6 +371,14 @@ subprojects { subProject ->
 	}
 	// exclude generated java sources - by explicitly setting the base source dir
 	checkstyleMain.source = 'src/main/java'
+	
+	// define a second checkstyle task for checking non-fatal violations
+	task nonFatalCheckstyle(type:Checkstyle) {
+		source = subProject.sourceSets.main.java
+		classpath = subProject.configurations.checkstyle
+		showViolations = false
+		configFile = rootProject.file( 'shared/config/checkstyle/checkstyle-non-fatal.xml' )
+	}
 
 	findbugs {
 		sourceSets = [ subProject.sourceSets.main, subProject.sourceSets.test ]
@@ -429,6 +450,8 @@ task wrapper(type: Wrapper) {
 buildScan {
 	licenseAgreementUrl = 'https://gradle.com/terms-of-service'
 	licenseAgree = 'yes'
+
+	recipe 'git-commit', baseUrl: 'https://github.com/hibernate/hibernate-orm/tree'
 }
 
 

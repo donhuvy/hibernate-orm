@@ -47,6 +47,7 @@ import org.hibernate.envers.internal.entities.mapper.relation.SortedSetCollectio
 import org.hibernate.envers.internal.entities.mapper.relation.ToOneIdMapper;
 import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleDummyComponentMapper;
 import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleEmbeddableComponentMapper;
+import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleMapElementNotKeyComponentMapper;
 import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleMapKeyIdComponentMapper;
 import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleMapKeyPropertyComponentMapper;
 import org.hibernate.envers.internal.entities.mapper.relation.component.MiddleRelatedComponentMapper;
@@ -78,6 +79,8 @@ import org.hibernate.type.ComponentType;
 import org.hibernate.type.ListType;
 import org.hibernate.type.ManyToOneType;
 import org.hibernate.type.MapType;
+import org.hibernate.type.MaterializedClobType;
+import org.hibernate.type.MaterializedNClobType;
 import org.hibernate.type.SetType;
 import org.hibernate.type.SortedMapType;
 import org.hibernate.type.SortedSetType;
@@ -157,7 +160,7 @@ public final class CollectionMetadataGenerator {
 
 		if ( oneToManyAttachedType && (inverseOneToMany || fakeOneToManyBidirectional || owningManyToOneWithJoinTableBidirectional) ) {
 			// A one-to-many relation mapped using @ManyToOne and @OneToMany(mappedBy="...")
-			addOneToManyAttached( fakeOneToManyBidirectional );
+			addOneToManyAttached( fakeOneToManyBidirectional  );
 		}
 		else {
 			// All other kinds of relations require a middle (join) table.
@@ -182,6 +185,10 @@ public final class CollectionMetadataGenerator {
 				referencingEntityName,
 				propertyName
 		);
+
+		// check whether the property has an @IndexColumn or @OrderColumn because its part of an
+		// IndexedCollection mapping type.
+		final boolean indexed = ( propertyValue instanceof IndexedCollection ) && ( (IndexedCollection) propertyValue ).getIndex() != null;
 
 		final String mappedBy = getMappedBy( propertyValue );
 
@@ -239,10 +246,16 @@ public final class CollectionMetadataGenerator {
 
 		PropertyMapper fakeBidirectionalRelationMapper;
 		PropertyMapper fakeBidirectionalRelationIndexMapper;
-		if ( fakeOneToManyBidirectional ) {
+		if ( fakeOneToManyBidirectional || indexed ) {
 			// In case of a fake many-to-one bidirectional relation, we have to generate a mapper which maps
 			// the mapped-by property name to the id of the related entity (which is the owner of the collection).
-			final String auditMappedBy = propertyAuditingData.getAuditMappedBy();
+			final String auditMappedBy;
+			if ( fakeOneToManyBidirectional ) {
+				auditMappedBy = propertyAuditingData.getAuditMappedBy();
+			}
+			else {
+				auditMappedBy = propertyValue.getMappedByProperty();
+			}
 
 			// Creating a prefixed relation mapper.
 			final IdMapper relMapper = referencingIdMapping.getIdMapper().prefixMappedProperties(
@@ -257,9 +270,20 @@ public final class CollectionMetadataGenerator {
 					referencingEntityName, false
 			);
 
+			final String positionMappedBy;
+			if ( fakeOneToManyBidirectional ) {
+				positionMappedBy = propertyAuditingData.getPositionMappedBy();
+			}
+			else if ( indexed ) {
+				final Value indexValue = ( (IndexedCollection) propertyValue ).getIndex();
+				positionMappedBy = indexValue.getColumnIterator().next().getText();
+			}
+			else {
+				positionMappedBy = null;
+			}
+
 			// Checking if there's an index defined. If so, adding a mapper for it.
-			if ( propertyAuditingData.getPositionMappedBy() != null ) {
-				final String positionMappedBy = propertyAuditingData.getPositionMappedBy();
+			if ( positionMappedBy != null ) {
 				fakeBidirectionalRelationIndexMapper = new SinglePropertyMapper(
 						new PropertyData(
 								positionMappedBy,
@@ -294,7 +318,8 @@ public final class CollectionMetadataGenerator {
 				referencedEntityName,
 				referencingIdData.getPrefixedMapper(),
 				fakeBidirectionalRelationMapper,
-				fakeBidirectionalRelationIndexMapper
+				fakeBidirectionalRelationIndexMapper,
+				indexed
 		);
 	}
 
@@ -424,7 +449,7 @@ public final class CollectionMetadataGenerator {
 				mainGenerator.getAuditStrategy(),
 				referencingIdData,
 				auditMiddleEntityName,
-				isEmbeddableElementType()
+				isRevisionTypeInId()
 		);
 
 		// Adding the XML mapping for the referencing entity, if the relation isn't inverse.
@@ -445,7 +470,8 @@ public final class CollectionMetadataGenerator {
 				middleEntityXml,
 				queryGeneratorBuilder,
 				referencedPrefix,
-				propertyAuditingData.getJoinTable().inverseJoinColumns()
+				propertyAuditingData.getJoinTable().inverseJoinColumns(),
+				!isLobMapElementType()
 		);
 
 		// ******
@@ -488,7 +514,8 @@ public final class CollectionMetadataGenerator {
 						middleEntityXml,
 						queryGeneratorBuilder,
 						"mapkey",
-						null
+						null,
+						true
 				);
 			}
 			else {
@@ -540,7 +567,8 @@ public final class CollectionMetadataGenerator {
 			Element xmlMapping,
 			QueryGeneratorBuilder queryGeneratorBuilder,
 			String prefix,
-			JoinColumn[] joinColumns) {
+			JoinColumn[] joinColumns,
+			boolean key) {
 		final Type type = value.getType();
 		if ( type instanceof ManyToOneType ) {
 			final String prefixRelated = prefix + "_";
@@ -651,7 +679,7 @@ public final class CollectionMetadataGenerator {
 		else {
 			// Last but one parameter: collection components are always insertable
 			final boolean mapped = mainGenerator.getBasicMetadataGenerator().addBasic(
-					xmlMapping,
+					key ? xmlMapping : xmlMapping.getParent(),
 					new PropertyAuditingData(
 							prefix,
 							"field",
@@ -664,13 +692,20 @@ public final class CollectionMetadataGenerator {
 					value,
 					null,
 					true,
-					true
+					key
 			);
 
-			if ( mapped ) {
+			if ( mapped && key ) {
 				// Simple values are always stored in the first item of the array returned by the query generator.
 				return new MiddleComponentData(
 						new MiddleSimpleComponentMapper( mainGenerator.getVerEntCfg(), prefix ),
+						0
+				);
+			}
+			else if ( mapped && !key ) {
+				// when mapped but not part of the key, its stored as a dummy mapper??
+				return new MiddleComponentData(
+						new MiddleMapElementNotKeyComponentMapper( mainGenerator.getVerEntCfg(), prefix ),
 						0
 				);
 			}
@@ -688,6 +723,7 @@ public final class CollectionMetadataGenerator {
 			MiddleComponentData indexComponentData) {
 		final Type type = propertyValue.getType();
 		final boolean embeddableElementType = isEmbeddableElementType();
+		final boolean lobMapElementType = isLobMapElementType();
 		if ( type instanceof SortedSetType ) {
 			currentMapper.addComposite(
 					propertyAuditingData.getPropertyData(),
@@ -726,7 +762,7 @@ public final class CollectionMetadataGenerator {
 							elementComponentData,
 							indexComponentData,
 							propertyValue.getComparator(),
-							embeddableElementType
+							embeddableElementType || lobMapElementType
 					)
 			);
 		}
@@ -740,7 +776,7 @@ public final class CollectionMetadataGenerator {
 							MapProxy.class,
 							elementComponentData,
 							indexComponentData,
-							embeddableElementType
+							embeddableElementType || lobMapElementType
 					)
 			);
 		}
@@ -819,9 +855,9 @@ public final class CollectionMetadataGenerator {
 
 		// Adding the revision type property to the entity xml.
 		mainGenerator.addRevisionType(
-				isEmbeddableElementType() ? middleEntityXmlId : middleEntityXml,
+				isRevisionTypeInId() ? middleEntityXmlId : middleEntityXml,
 				middleEntityXml,
-				isEmbeddableElementType()
+				isRevisionTypeInId()
 		);
 
 		// All other properties should also be part of the primary key of the middle entity.
@@ -985,5 +1021,30 @@ public final class CollectionMetadataGenerator {
 		public Table getTable() {
 			return table;
 		}
+	}
+
+	/**
+	 * Returns whether the revision type column part of the collection table's primary key.
+	 *
+	 * @return {@code true} if the revision type should be part of the primary key, otherwise {@code false}.
+	 */
+	private boolean isRevisionTypeInId() {
+		return isEmbeddableElementType() || isLobMapElementType();
+	}
+
+	/**
+	 * Returns whether the collection is a map-type and that the map element is defined as a Clob/NClob type.
+	 *
+	 * @return {@code true} if the element is a Clob/NClob type, otherwise {@code false}.
+	 */
+	private boolean isLobMapElementType() {
+		if ( propertyValue instanceof org.hibernate.mapping.Map ) {
+			final Type type = propertyValue.getElement().getType();
+			// we're only interested in basic types
+			if ( !type.isComponentType() && !type.isAssociationType() ) {
+				return ( type instanceof MaterializedClobType ) || ( type instanceof MaterializedNClobType );
+			}
+		}
+		return false;
 	}
 }

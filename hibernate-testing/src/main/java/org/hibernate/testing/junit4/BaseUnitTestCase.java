@@ -6,6 +6,11 @@
  */
 package org.hibernate.testing.junit4;
 
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.transaction.SystemException;
 
 import org.hibernate.engine.transaction.internal.jta.JtaStatusHelper;
@@ -35,8 +40,10 @@ public abstract class BaseUnitTestCase {
 
 	private ConnectionLeakUtil connectionLeakUtil;
 
+	protected final ExecutorService executorService = Executors.newSingleThreadExecutor();
+
 	@Rule
-	public TestRule globalTimeout = new Timeout( 30 * 60 * 1000 ); // no test should run longer than 30 minutes
+	public TestRule globalTimeout = Timeout.millis( TimeUnit.MINUTES.toMillis( 30 ) ); // no test should run longer than 30 minutes
 
 	public BaseUnitTestCase() {
 		if ( enableConnectionLeakDetection ) {
@@ -69,6 +76,22 @@ public abstract class BaseUnitTestCase {
 		}
 		catch ( InterruptedException e ) {
 			Thread.interrupted();
+		}
+	}
+
+	protected Future<?> executeAsync(Runnable callable) {
+		return executorService.submit(callable);
+	}
+
+	protected void executeSync(Runnable callable) {
+		try {
+			executeAsync( callable ).get();
+		}
+		catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+		catch (ExecutionException e) {
+			throw new RuntimeException( e.getCause() );
 		}
 	}
 }

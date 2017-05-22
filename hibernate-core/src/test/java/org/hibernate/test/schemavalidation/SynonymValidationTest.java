@@ -12,7 +12,6 @@ import javax.persistence.GeneratedValue;
 import javax.persistence.Id;
 import javax.persistence.Table;
 
-import org.hibernate.Session;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.registry.StandardServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
@@ -23,6 +22,7 @@ import org.hibernate.tool.schema.JdbcMetadaAccessStrategy;
 
 import org.hibernate.testing.RequiresDialect;
 import org.hibernate.testing.junit4.BaseNonConfigCoreFunctionalTestCase;
+import org.hibernate.testing.transaction.TransactionUtil;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,6 +30,9 @@ import org.junit.Test;
 /**
  * Allows the BaseCoreFunctionalTestCase to create the schema using TestEntity.  The test method validates against an
  * identical entity, but using the synonym name.
+ *
+ * When SYNONYM are used, the GROUPED Strategy cannot be applied because when the tableNamePattern was not provided
+ * java.sql.DatabaseMetaData#getColumns(...) Oracle implementation returns only the columns related with the synonym
  *
  * @author Brett Meyer
  */
@@ -44,63 +47,26 @@ public class SynonymValidationTest extends BaseNonConfigCoreFunctionalTestCase {
 
 	@Before
 	public void setUp() {
-		Session s = openSession();
-		try {
-			s.getTransaction().begin();
-			s.createSQLQuery( "CREATE SYNONYM test_synonym FOR test_entity" ).executeUpdate();
-			s.getTransaction().commit();
-		}
-		catch (Exception e) {
-			if ( s.getTransaction().isActive() ) {
-				s.getTransaction().rollback();
-			}
-		}
-		finally {
-			s.close();
-		}
+		TransactionUtil.doInHibernate( this::sessionFactory, session -> {
+			session.createSQLQuery( "CREATE SYNONYM test_synonym FOR test_entity" ).executeUpdate();
+		} );
 	}
 
 	@After
 	public void tearDown() {
-		Session s = openSession();
-		try {
-			s.getTransaction().begin();
-			s.createSQLQuery( "DROP SYNONYM test_synonym FORCE" ).executeUpdate();
-			s.getTransaction().commit();
-		}
-		catch (Exception e) {
-			if ( s.getTransaction().isActive() ) {
-				s.getTransaction().rollback();
-			}
-		}
-		finally {
-			s.close();
-		}
+		TransactionUtil.doInHibernate( this::sessionFactory, session -> {
+			session.createSQLQuery( "DROP SYNONYM test_synonym FORCE" ).executeUpdate();
+		});
 	}
 
 	@Test
-	public void testSynonymUsingImprovedSchemaValidar() {
+	public void testSynonymUsingIndividuallySchemaValidator() {
 		ssr = new StandardServiceRegistryBuilder()
 				.applySetting( AvailableSettings.ENABLE_SYNONYMS, "true" )
-				.applySetting( AvailableSettings.HBM2DDL_JDBC_METADATA_EXTRACTOR_STRATEGY, JdbcMetadaAccessStrategy.GROUPED )
-				.build();
-		try {
-			final MetadataSources metadataSources = new MetadataSources( ssr );
-			metadataSources.addAnnotatedClass( TestEntityWithSynonym.class );
-			metadataSources.addAnnotatedClass( TestEntity.class );
-
-			new SchemaValidator().validate( metadataSources.buildMetadata() );
-		}
-		finally {
-			StandardServiceRegistryBuilder.destroy( ssr );
-		}
-	}
-
-	@Test
-	public void testSynonymUsingSchemaValidator() {
-		ssr = new StandardServiceRegistryBuilder()
-				.applySetting( AvailableSettings.ENABLE_SYNONYMS, "true" )
-				.applySetting( AvailableSettings.HBM2DDL_JDBC_METADATA_EXTRACTOR_STRATEGY, JdbcMetadaAccessStrategy.GROUPED )
+				.applySetting(
+						AvailableSettings.HBM2DDL_JDBC_METADATA_EXTRACTOR_STRATEGY,
+						JdbcMetadaAccessStrategy.INDIVIDUALLY
+				)
 				.build();
 		try {
 			final MetadataSources metadataSources = new MetadataSources( ssr );

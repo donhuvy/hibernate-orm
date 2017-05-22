@@ -68,7 +68,7 @@ public class JdbcResourceLocalTransactionCoordinatorImpl implements TransactionC
 	@Override
 	public TransactionDriver getTransactionDriverControl() {
 		// Again, this PhysicalTransactionDelegate will act as the bridge from the local transaction back into the
-		// coordinator.  We lazily build it as we invalidate each delegate afterQuery each transaction (a delegate is
+		// coordinator.  We lazily build it as we invalidate each delegate after each transaction (a delegate is
 		// valid for just one transaction)
 		if ( physicalTransactionDelegate == null ) {
 			physicalTransactionDelegate = new TransactionDriverControlImpl( jdbcResourceTransactionAccess.getResourceLocalTransaction() );
@@ -250,14 +250,16 @@ public class JdbcResourceLocalTransactionCoordinatorImpl implements TransactionC
 
 		@Override
 		public void markRollbackOnly() {
-			if ( log.isDebugEnabled() ) {
-				log.debug(
-						"JDBC transaction marked for rollback-only (exception provided for stack trace)",
-						new Exception( "exception just for purpose of providing stack trace" )
-				);
-			}
+			if ( getStatus() != TransactionStatus.ROLLED_BACK && getStatus() != TransactionStatus.NOT_ACTIVE ) {
+				if ( log.isDebugEnabled() ) {
+					log.debug(
+							"JDBC transaction marked for rollback-only (exception provided for stack trace)",
+							new Exception( "exception just for purpose of providing stack trace" )
+					);
+				}
 
-			rollbackOnly = true;
+				rollbackOnly = true;
+			}
 		}
 	}
 }

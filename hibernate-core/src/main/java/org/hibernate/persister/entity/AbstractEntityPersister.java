@@ -70,6 +70,7 @@ import org.hibernate.engine.spi.LoadQueryInfluencers;
 import org.hibernate.engine.spi.Mapping;
 import org.hibernate.engine.spi.PersistenceContext.NaturalIdHelper;
 import org.hibernate.engine.spi.PersistentAttributeInterceptable;
+import org.hibernate.engine.spi.SelfDirtinessTracker;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.engine.spi.ValueInclusion;
@@ -268,6 +269,14 @@ public abstract class AbstractEntityPersister
 	private final Map subclassPropertyAliases = new HashMap();
 	private final Map subclassPropertyColumnNames = new HashMap();
 
+	/**
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then propertyMapping will only contain one of those properties.
+	 * To ensure correct results, propertyMapping should only be used
+	 * for the concrete EntityPersister (since the concrete EntityPersister
+	 * cannot have duplicated property names).
+	 */
 	protected final BasicEntityPropertyMapping propertyMapping;
 
 	private final boolean useReferenceCacheEntries;
@@ -288,7 +297,7 @@ public abstract class AbstractEntityPersister
 
 	protected abstract boolean isClassOrSuperclassTable(int j);
 
-	protected abstract int getSubclassTableSpan();
+	public abstract int getSubclassTableSpan();
 
 	protected abstract int getTableSpan();
 
@@ -725,7 +734,7 @@ public abstract class AbstractEntityPersister
 				else {
 					Column col = (Column) thing;
 					String colName = col.getQuotedName( dialect );
-					colnos[l] = columns.size(); //beforeQuery add :-)
+					colnos[l] = columns.size(); //before add :-)
 					formnos[l] = -1;
 					columns.add( colName );
 					cols[l] = colName;
@@ -935,8 +944,10 @@ public abstract class AbstractEntityPersister
 					session.getPersistenceContext().addUninitializedCollection( persister, collection, key );
 				}
 
-				// Initialize it
-				session.initializeCollection( collection, false );
+				// HHH-11161 Initialize, if the collection is not extra lazy
+				if ( !persister.isExtraLazy() ) {
+					session.initializeCollection( collection, false );
+				}
 				interceptor.attributeInitialized( fieldName );
 
 				if ( collectionType.isArrayType() ) {
@@ -1060,26 +1071,40 @@ public abstract class AbstractEntityPersister
 					final Object[] snapshot = entry.getLoadedState();
 					for ( LazyAttributeDescriptor fetchGroupAttributeDescriptor : fetchGroupAttributeDescriptors ) {
 						final boolean previousInitialized = initializedLazyAttributeNames.contains( fetchGroupAttributeDescriptor.getName() );
-						final Object loadedValue = fetchGroupAttributeDescriptor.getType().nullSafeGet(
+
+						if ( previousInitialized ) {
+							// todo : one thing we should consider here is potentially un-marking an attribute as dirty based on the selected value
+							// 		we know the current value - getPropertyValue( entity, fetchGroupAttributeDescriptor.getAttributeIndex() );
+							// 		we know the selected value (see selectedValue below)
+							//		we can use the attribute Type to tell us if they are the same
+							//
+							//		assuming entity is a SelfDirtinessTracker we can also know if the attribute is
+							//			currently considered dirty, and if really not dirty we would do the un-marking
+							//
+							//		of course that would mean a new method on SelfDirtinessTracker to allow un-marking
+
+							// its already been initialized (e.g. by a write) so we don't want to overwrite
+							continue;
+						}
+
+
+						final Object selectedValue = fetchGroupAttributeDescriptor.getType().nullSafeGet(
 								rs,
 								lazyPropertyColumnAliases[fetchGroupAttributeDescriptor.getLazyIndex()],
 								session,
 								entity
 						);
+
 						final boolean set = initializeLazyProperty(
 								fieldName,
 								entity,
 								session,
 								snapshot,
 								fetchGroupAttributeDescriptor.getLazyIndex(),
-								loadedValue
+								selectedValue
 						);
-						if ( previousInitialized ) {
-							// its already been initialized (e.g. by a write) so we don't want to overwrite
-							continue;
-						}
 						if ( set ) {
-							result = loadedValue;
+							result = selectedValue;
 							interceptor.attributeInitialized( fetchGroupAttributeDescriptor.getName() );
 						}
 
@@ -1230,7 +1255,7 @@ public abstract class AbstractEntityPersister
 
 	public String[] getIdentifierAliases(String suffix) {
 		// NOTE: this assumes something about how propertySelectFragment is implemented by the subclass!
-		// was toUnqotedAliasStrings( getIdentifierColumnNames() ) beforeQuery - now tried
+		// was toUnqotedAliasStrings( getIdentifierColumnNames() ) before - now tried
 		// to remove that unqoting and missing aliases..
 		return new Alias( suffix ).toAliasStrings( getIdentifierAliases() );
 	}
@@ -1242,7 +1267,7 @@ public abstract class AbstractEntityPersister
 
 	public String getDiscriminatorAlias(String suffix) {
 		// NOTE: this assumes something about how propertySelectFragment is implemented by the subclass!
-		// was toUnqotedAliasStrings( getdiscriminatorColumnName() ) beforeQuery - now tried
+		// was toUnqotedAliasStrings( getdiscriminatorColumnName() ) before - now tried
 		// to remove that unqoting and missing aliases..
 		return entityMetamodel.hasSubclasses() ?
 				new Alias( suffix ).toAliasString( getDiscriminatorAlias() ) :
@@ -1789,18 +1814,62 @@ public abstract class AbstractEntityPersister
 		return getRootTableKeyColumnNames();
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then this method may return the wrong results.
+	 * To ensure correct results, this method should only be used when
+	 * {@literal this} is the concrete EntityPersister (since the
+	 * concrete EntityPersister cannot have duplicated property names).
+	 */
+	@Override
 	public String[] toColumns(String alias, String propertyName) throws QueryException {
 		return propertyMapping.toColumns( alias, propertyName );
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then this method may return the wrong results.
+	 * To ensure correct results, this method should only be used when
+	 * {@literal this} is the concrete EntityPersister (since the
+	 * concrete EntityPersister cannot have duplicated property names).
+	 */
+	@Override
 	public String[] toColumns(String propertyName) throws QueryException {
 		return propertyMapping.getColumnNames( propertyName );
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then this method may return the wrong results.
+	 * To ensure correct results, this method should only be used when
+	 * {@literal this} is the concrete EntityPersister (since the
+	 * concrete EntityPersister cannot have duplicated property names).
+	 */
+	@Override
 	public Type toType(String propertyName) throws QueryException {
 		return propertyMapping.toType( propertyName );
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then this method may return the wrong results.
+	 * To ensure correct results, this method should only be used when
+	 * {@literal this} is the concrete EntityPersister (since the
+	 * concrete EntityPersister cannot have duplicated property names).
+	 */
+	@Override
 	public String[] getPropertyColumnNames(String propertyName) {
 		return propertyMapping.getColumnNames( propertyName );
 	}
@@ -2677,6 +2746,16 @@ public abstract class AbstractEntityPersister
 			final SharedSessionContractImplementor session,
 			int index) throws SQLException {
 		if ( rowId != null ) {
+			if ( LOG.isTraceEnabled() ) {
+				LOG.tracev(
+					String.format(
+						"binding parameter [%s] as ROWID - [%s]",
+						index,
+						rowId
+					)
+				);
+			}
+
 			ps.setObject( index, rowId );
 			return 1;
 		}
@@ -2864,7 +2943,7 @@ public abstract class AbstractEntityPersister
 	 * Perform an SQL INSERT.
 	 * <p/>
 	 * This for is used for all non-root tables as well as the root table
-	 * in cases where the identifier value is known beforeQuery the insert occurs.
+	 * in cases where the identifier value is known before the insert occurs.
 	 */
 	protected void insert(
 			final Serializable id,
@@ -3223,7 +3302,7 @@ public abstract class AbstractEntityPersister
 				getIdentifierType().nullSafeSet( delete, id, index, session );
 				index += getIdentifierColumnSpan();
 
-				// We should use the _current_ object state (ie. afterQuery any updates that occurred during flush)
+				// We should use the _current_ object state (ie. after any updates that occurred during flush)
 
 				if ( useVersion ) {
 					getVersionType().nullSafeSet( delete, version, index, session );
@@ -3317,8 +3396,8 @@ public abstract class AbstractEntityPersister
 			}
 		}
 
-		//note: dirtyFields==null means we had no snapshot, and we couldn't get one using select-beforeQuery-update
-		//	  oldFields==null just means we had no snapshot to begin with (we might have used select-beforeQuery-update to get the dirtyFields)
+		//note: dirtyFields==null means we had no snapshot, and we couldn't get one using select-before-update
+		//	  oldFields==null just means we had no snapshot to begin with (we might have used select-before-update to get the dirtyFields)
 
 		final boolean[] tableUpdateNeeded = getTableUpdateNeeded( dirtyFields, hasDirtyCollection );
 		final int span = getTableSpan();
@@ -3346,7 +3425,7 @@ public abstract class AbstractEntityPersister
 		else if ( !isModifiableEntity( entry ) ) {
 			// We need to generate UPDATE SQL when a non-modifiable entity (e.g., read-only or immutable)
 			// needs:
-			// - to have references to transient entities set to null beforeQuery being deleted
+			// - to have references to transient entities set to null before being deleted
 			// - to have version incremented do to a "dirty" association
 			// If dirtyFields == null, then that means that there are no dirty properties to
 			// to be updated; an empty array for the dirty fields needs to be passed to
@@ -3815,8 +3894,8 @@ public abstract class AbstractEntityPersister
 	}
 
 	/**
-	 * Post-construct is a callback for AbstractEntityPersister subclasses to call afterQuery they are all done with their
-	 * constructor processing.  It allows AbstractEntityPersister to extend its construction afterQuery all subclass-specific
+	 * Post-construct is a callback for AbstractEntityPersister subclasses to call after they are all done with their
+	 * constructor processing.  It allows AbstractEntityPersister to extend its construction after all subclass-specific
 	 * details have been handled.
 	 *
 	 * @param mapping The mapping
@@ -4141,7 +4220,6 @@ public abstract class AbstractEntityPersister
 				currentState,
 				previousState,
 				propertyColumnUpdateable,
-				hasUninitializedLazyProperties( entity ),
 				session
 		);
 		if ( props == null ) {
@@ -4173,7 +4251,6 @@ public abstract class AbstractEntityPersister
 				old,
 				propertyColumnUpdateable,
 				getPropertyUpdateability(),
-				hasUninitializedLazyProperties( entity ),
 				session
 		);
 		if ( props == null ) {
@@ -4487,6 +4564,17 @@ public abstract class AbstractEntityPersister
 		return false;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * Warning:
+	 * When there are duplicated property names in the subclasses
+	 * then this method may return the wrong results.
+	 * To ensure correct results, this method should only be used when
+	 * {@literal this} is the concrete EntityPersister (since the
+	 * concrete EntityPersister cannot have duplicated property names).
+	 */
+	@Override
 	public Type getPropertyType(String propertyName) throws MappingException {
 		return propertyMapping.toType( propertyName );
 	}

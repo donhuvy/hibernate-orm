@@ -131,7 +131,7 @@ public abstract class AbstractSharedSessionContract implements SharedSessionCont
 	private transient Boolean useStreamForLobBinding;
 	private transient long timestamp;
 
-	private transient Integer jdbcBatchSize;
+	private Integer jdbcBatchSize;
 
 	protected transient ExceptionConverter exceptionConverter;
 
@@ -324,12 +324,23 @@ public abstract class AbstractSharedSessionContract implements SharedSessionCont
 	}
 
 	@Override
+	public boolean isOpenOrWaitingForAutoClose() {
+		return !isClosed() || waitingForAutoClose;
+	}
+
+	@Override
 	public void checkOpen(boolean markForRollbackIfClosed) {
 		if ( isClosed() ) {
-			if ( markForRollbackIfClosed ) {
+			if ( markForRollbackIfClosed && transactionCoordinator.isTransactionActive() ) {
 				markForRollbackOnly();
 			}
 			throw new IllegalStateException( "Session/EntityManager is closed" );
+		}
+	}
+
+	protected void checkOpenOrWaitingForAutoClose() {
+		if ( !waitingForAutoClose ) {
+			checkOpen();
 		}
 	}
 
@@ -349,7 +360,7 @@ public abstract class AbstractSharedSessionContract implements SharedSessionCont
 	@Override
 	public boolean isTransactionInProgress() {
 		if ( waitingForAutoClose ) {
-			return transactionCoordinator.isTransactionActive();
+			return factory.isOpen() && transactionCoordinator.isTransactionActive();
 		}
 		return !isClosed() && transactionCoordinator.isTransactionActive();
 	}
@@ -377,7 +388,7 @@ public abstract class AbstractSharedSessionContract implements SharedSessionCont
 			);
 
 		}
-		if ( !isClosed() ) {
+		if ( !isClosed() || (waitingForAutoClose && factory.isOpen()) ) {
 			getTransactionCoordinator().pulse();
 		}
 		return this.currentHibernateTransaction;
@@ -1053,5 +1064,6 @@ public abstract class AbstractSharedSessionContract implements SharedSessionCont
 				.buildTransactionCoordinator( jdbcCoordinator, this );
 
 		entityNameResolver = new CoordinatingEntityNameResolver( factory, interceptor );
+		exceptionConverter = new ExceptionConverterImpl( this );
 	}
 }

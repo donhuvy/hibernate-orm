@@ -38,6 +38,7 @@ import org.hibernate.property.access.spi.Setter;
 /**
  * @author Adam Warski (adam at warski dot org)
  * @author Michal Skowronek (mskowr at o2 dot pl)
+ * @author Chris Cranford
  */
 public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 	protected final CommonCollectionMapperData commonCollectionMapperData;
@@ -193,10 +194,18 @@ public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 				data.put( propertyData.getModifiedFlagPropertyName(), true );
 			}
 			else {
+				// HHH-7949 - Performance optimization to avoid lazy-fetching collections that have
+				// not been changed for deriving the modified flags value.
+				final PersistentCollection pc = (PersistentCollection) newObj;
+				if ( ( pc != null && !pc.isDirty() ) || ( newObj == null && oldObj == null ) ) {
+					data.put( propertyData.getModifiedFlagPropertyName(), false );
+					return;
+				}
+
 				final List<PersistentCollectionChangeData> changes = mapCollectionChanges(
 						session,
 						commonCollectionMapperData.getCollectionReferencingPropertyData().getName(),
-						(PersistentCollection) newObj,
+						pc,
 						(Serializable) oldObj,
 						null
 				);
@@ -386,5 +395,14 @@ public abstract class AbstractCollectionMapper<T> implements PropertyMapper {
 		addCollectionChanges( session, collectionChanges, deleted, RevisionType.DEL, id );
 
 		return collectionChanges;
+	}
+
+	@Override
+	public boolean hasPropertiesWithModifiedFlag() {
+		if ( commonCollectionMapperData != null ) {
+			final PropertyData propertyData = commonCollectionMapperData.getCollectionReferencingPropertyData();
+			return propertyData != null && propertyData.isUsingModifiedFlag();
+		}
+		return false;
 	}
 }

@@ -44,10 +44,13 @@ import org.hibernate.cache.CacheException;
 import org.hibernate.engine.internal.NonNullableTransientDependencies;
 import org.hibernate.internal.CoreLogging;
 import org.hibernate.internal.CoreMessageLogger;
+import org.hibernate.metadata.ClassMetadata;
 import org.hibernate.proxy.HibernateProxy;
 import org.hibernate.proxy.LazyInitializer;
 import org.hibernate.type.CollectionType;
 import org.hibernate.type.EntityType;
+import org.hibernate.type.ForeignKeyDirection;
+import org.hibernate.type.OneToOneType;
 import org.hibernate.type.Type;
 
 /**
@@ -247,9 +250,9 @@ public class ActionQueue {
 
 	private void addInsertAction(AbstractEntityInsertAction insert) {
 		if ( insert.isEarlyInsert() ) {
-			// For early inserts, must execute inserts beforeQuery finding non-nullable transient entities.
+			// For early inserts, must execute inserts before finding non-nullable transient entities.
 			// TODO: find out why this is necessary
-			LOG.tracev( "Executing inserts beforeQuery finding non-nullable transient entities for early insert: [{0}]", insert );
+			LOG.tracev( "Executing inserts before finding non-nullable transient entities for early insert: [{0}]", insert );
 			executeInserts();
 		}
 		NonNullableTransientDependencies nonNullableTransientDependencies = insert.findNonNullableTransientEntities();
@@ -271,7 +274,7 @@ public class ActionQueue {
 
 	private void addResolvedEntityInsertAction(AbstractEntityInsertAction insert) {
 		if ( insert.isEarlyInsert() ) {
-			LOG.trace( "Executing insertions beforeQuery resolved early-insert" );
+			LOG.trace( "Executing insertions before resolved early-insert" );
 			executeInserts();
 			LOG.debug( "Executing identity-insert immediately" );
 			execute( insert );
@@ -406,7 +409,7 @@ public class ActionQueue {
 	/**
 	 * Throws {@link org.hibernate.PropertyValueException} if there are any unresolved entity insert actions that depend
 	 * on non-nullable associations with a transient entity. This method should be called on completion of an operation
-	 * (afterQuery all cascades are completed) that saves an entity.
+	 * (after all cascades are completed) that saves an entity.
 	 * 
 	 * @throws org.hibernate.PropertyValueException if there are any unresolved entity insert actions;
 	 * {@link org.hibernate.PropertyValueException#getEntityName()} and
@@ -604,7 +607,7 @@ public class ActionQueue {
 		finally {
 			if ( session.getFactory().getSessionFactoryOptions().isQueryCacheEnabled() ) {
 				// Strictly speaking, only a subset of the list may have been processed if a RuntimeException occurs.
-				// We still invalidate all spaces. I don't see this as a big deal - afterQuery all, RuntimeExceptions are
+				// We still invalidate all spaces. I don't see this as a big deal - after all, RuntimeExceptions are
 				// unexpected.
 				Set<Serializable> propertySpaces = list.getQuerySpaces();
 				invalidateSpaces( propertySpaces.toArray( new Serializable[propertySpaces.size()] ) );
@@ -919,7 +922,7 @@ public class ActionQueue {
 	}
 
 	/**
-	 * Encapsulates behavior needed for beforeQuery transaction processing
+	 * Encapsulates behavior needed for before transaction processing
 	 */
 	private static class BeforeTransactionCompletionProcessQueue extends AbstractTransactionCompletionProcessQueue<BeforeTransactionCompletionProcess> {
 		private BeforeTransactionCompletionProcessQueue(SessionImplementor session) {
@@ -942,7 +945,7 @@ public class ActionQueue {
 	}
 
 	/**
-	 * Encapsulates behavior needed for afterQuery transaction processing
+	 * Encapsulates behavior needed for after transaction processing
 	 */
 	private static class AfterTransactionCompletionProcessQueue extends AbstractTransactionCompletionProcessQueue<AfterTransactionCompletionProcess> {
 		private Set<String> querySpacesToInvalidate = new HashSet<String>();
@@ -1102,7 +1105,7 @@ public class ActionQueue {
 				for ( int j = i - 1; j >= 0; j-- ) {
 					BatchIdentifier prevBatchIdentifier = latestBatches.get( j );
 					if(prevBatchIdentifier.getParentEntityNames().contains( entityName )) {
-						latestBatches.remove( i );
+						latestBatches.remove( batchIdentifier );
 						latestBatches.add( j, batchIdentifier );
 					}
 				}
@@ -1113,7 +1116,7 @@ public class ActionQueue {
 					//Take care of unidirectional @OneToOne associations but exclude bidirectional @ManyToMany
 					if(nextBatchIdentifier.getChildEntityNames().contains( entityName ) &&
 						!batchIdentifier.getChildEntityNames().contains( nextBatchIdentifier.getEntityName() )) {
-						latestBatches.remove( i );
+						latestBatches.remove( batchIdentifier );
 						latestBatches.add( j, batchIdentifier );
 					}
 				}
@@ -1134,20 +1137,34 @@ public class ActionQueue {
 		 */
 		private void addParentChildEntityNames(AbstractEntityInsertAction action, BatchIdentifier batchIdentifier) {
 			Object[] propertyValues = action.getState();
-			Type[] propertyTypes = action.getPersister().getClassMetadata().getPropertyTypes();
+			ClassMetadata classMetadata = action.getPersister().getClassMetadata();
+			if ( classMetadata != null ) {
+				Type[] propertyTypes = classMetadata.getPropertyTypes();
 
-			for ( int i = 0; i < propertyValues.length; i++ ) {
-				Object value = propertyValues[i];
-				Type type = propertyTypes[i];
-				if ( type.isEntityType() && value != null ) {
-					EntityType entityType = (EntityType) type;
-					String entityName = entityType.getName();
-					batchIdentifier.getParentEntityNames().add( entityName );
-				}
-				else if ( type.isCollectionType() && value != null ) {
-					CollectionType collectionType = (CollectionType) type;
-					String entityName = collectionType.getAssociatedEntityName( ( (SessionImplementor) action.getSession() ).getSessionFactory() );
-					batchIdentifier.getChildEntityNames().add( entityName );
+				for ( int i = 0; i < propertyValues.length; i++ ) {
+					Object value = propertyValues[i];
+					Type type = propertyTypes[i];
+					if ( type.isEntityType() && value != null ) {
+						EntityType entityType = (EntityType) type;
+						String entityName = entityType.getName();
+
+						if ( entityType.isOneToOne() &&
+								OneToOneType.class.cast( entityType ).getForeignKeyDirection() == ForeignKeyDirection.TO_PARENT ) {
+							batchIdentifier.getChildEntityNames().add( entityName );
+						}
+						else {
+							batchIdentifier.getParentEntityNames().add( entityName );
+						}
+					}
+					else if ( type.isCollectionType() && value != null ) {
+						CollectionType collectionType = (CollectionType) type;
+						final SessionFactoryImplementor sessionFactory = ( (SessionImplementor) action.getSession() )
+								.getSessionFactory();
+						if ( collectionType.getElementType( sessionFactory ).isEntityType() ) {
+							String entityName = collectionType.getAssociatedEntityName( sessionFactory );
+							batchIdentifier.getChildEntityNames().add( entityName );
+						}
+					}
 				}
 			}
 		}

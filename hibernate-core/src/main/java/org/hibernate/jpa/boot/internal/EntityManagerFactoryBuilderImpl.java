@@ -12,7 +12,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.StringTokenizer;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.persistence.AttributeConverter;
@@ -22,8 +24,6 @@ import javax.persistence.PersistenceException;
 import javax.persistence.spi.PersistenceUnitTransactionType;
 import javax.sql.DataSource;
 
-import javassist.CtClass;
-import javassist.CtField;
 
 import org.hibernate.SessionFactory;
 import org.hibernate.SessionFactoryObserver;
@@ -43,6 +43,7 @@ import org.hibernate.boot.registry.BootstrapServiceRegistry;
 import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder;
 import org.hibernate.boot.registry.StandardServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
+import org.hibernate.boot.registry.classloading.internal.TcclLookupPrecedence;
 import org.hibernate.boot.registry.classloading.spi.ClassLoaderService;
 import org.hibernate.boot.registry.selector.StrategyRegistrationProvider;
 import org.hibernate.boot.registry.selector.spi.StrategySelector;
@@ -51,6 +52,8 @@ import org.hibernate.boot.spi.MetadataImplementor;
 import org.hibernate.boot.spi.SessionFactoryBuilderImplementor;
 import org.hibernate.bytecode.enhance.spi.DefaultEnhancementContext;
 import org.hibernate.bytecode.enhance.spi.EnhancementContext;
+import org.hibernate.bytecode.enhance.spi.UnloadedClass;
+import org.hibernate.bytecode.enhance.spi.UnloadedField;
 import org.hibernate.cfg.AttributeConverterDefinition;
 import org.hibernate.cfg.Environment;
 import org.hibernate.cfg.beanvalidation.BeanValidationIntegrator;
@@ -103,7 +106,6 @@ import static org.hibernate.internal.HEMLogging.messageLogger;
 import static org.hibernate.jpa.AvailableSettings.CFG_FILE;
 import static org.hibernate.jpa.AvailableSettings.CLASS_CACHE_PREFIX;
 import static org.hibernate.jpa.AvailableSettings.COLLECTION_CACHE_PREFIX;
-import static org.hibernate.jpa.AvailableSettings.DISCARD_PC_ON_CLOSE;
 import static org.hibernate.jpa.AvailableSettings.PERSISTENCE_UNIT_NAME;
 
 /**
@@ -277,39 +279,39 @@ public class EntityManagerFactoryBuilderImpl implements EntityManagerFactoryBuil
 		return new DefaultEnhancementContext() {
 
 			@Override
-			public boolean isEntityClass(CtClass classDescriptor) {
+			public boolean isEntityClass(UnloadedClass classDescriptor) {
 				return managedResources.getAnnotatedClassNames().contains( classDescriptor.getName() )
 						&& super.isEntityClass( classDescriptor );
 			}
 
 			@Override
-			public boolean isCompositeClass(CtClass classDescriptor) {
+			public boolean isCompositeClass(UnloadedClass classDescriptor) {
 				return managedResources.getAnnotatedClassNames().contains( classDescriptor.getName() )
 						&& super.isCompositeClass( classDescriptor );
 			}
 
 			@Override
-			public boolean doBiDirectionalAssociationManagement(CtField field) {
+			public boolean doBiDirectionalAssociationManagement(UnloadedField field) {
 				return associationManagementEnabled;
 			}
 
 			@Override
-			public boolean doDirtyCheckingInline(CtClass classDescriptor) {
+			public boolean doDirtyCheckingInline(UnloadedClass classDescriptor) {
 				return dirtyTrackingEnabled;
 			}
 
 			@Override
-			public boolean hasLazyLoadableAttributes(CtClass classDescriptor) {
+			public boolean hasLazyLoadableAttributes(UnloadedClass classDescriptor) {
 				return lazyInitializationEnabled;
 			}
 
 			@Override
-			public boolean isLazyLoadable(CtField field) {
+			public boolean isLazyLoadable(UnloadedField field) {
 				return lazyInitializationEnabled;
 			}
 
 			@Override
-			public boolean doExtendedEnhancement(CtClass classDescriptor) {
+			public boolean doExtendedEnhancement(UnloadedClass classDescriptor) {
 				// doesn't make any sense to have extended enhancement enabled at runtime. we only enhance entities anyway.
 				return false;
 			}
@@ -387,6 +389,15 @@ public class EntityManagerFactoryBuilderImpl implements EntityManagerFactoryBuil
 				}
 				else if ( ClassLoader.class.isInstance( classLoadersSetting ) ) {
 					bsrBuilder.applyClassLoader( (ClassLoader) classLoadersSetting );
+				}
+			}
+                        
+			//configurationValues not assigned yet, using directly the properties of the PU
+			Properties puProperties = persistenceUnit.getProperties();
+			if( puProperties != null ) {
+				final String tcclLookupPrecedence = puProperties.getProperty( org.hibernate.cfg.AvailableSettings.TC_CLASSLOADER );
+				if( tcclLookupPrecedence != null ) {
+					bsrBuilder.applyTcclLookupPrecedence( TcclLookupPrecedence.valueOf( tcclLookupPrecedence.toUpperCase( Locale.ROOT ) ) );
 				}
 			}
 		}
@@ -584,7 +595,7 @@ public class EntityManagerFactoryBuilderImpl implements EntityManagerFactoryBuil
 		applyJdbcConnectionProperties( ssrBuilder );
 		applyTransactionProperties( ssrBuilder );
 
-		// flush beforeQuery completion validation
+		// flush before completion validation
 		if ( "true".equals( configurationValues.get( Environment.FLUSH_BEFORE_COMPLETION ) ) ) {
 			ssrBuilder.applySetting( Environment.FLUSH_BEFORE_COMPLETION, "false" );
 			LOG.definingFlushBeforeCompletionIgnoredInHem( Environment.FLUSH_BEFORE_COMPLETION );
@@ -899,6 +910,11 @@ public class EntityManagerFactoryBuilderImpl implements EntityManagerFactoryBuil
 		final boolean jtaTransactionAccessEnabled = readBooleanConfigurationValue( AvailableSettings.ALLOW_JTA_TRANSACTION_ACCESS );
 		if ( !jtaTransactionAccessEnabled ) {
 			( ( SessionFactoryBuilderImplementor ) sfBuilder ).disableJtaTransactionAccess();
+		}
+
+		final boolean allowRefreshDetachedEntity = readBooleanConfigurationValue( org.hibernate.cfg.AvailableSettings.ALLOW_REFRESH_DETACHED_ENTITY );
+		if ( !allowRefreshDetachedEntity ) {
+			( (SessionFactoryBuilderImplementor) sfBuilder ).disableRefreshDetachedEntity();
 		}
 
 		// Locate and apply any requested SessionFactoryObserver

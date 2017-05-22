@@ -6,6 +6,7 @@
  */
 package org.hibernate.test.tool.schema;
 
+import java.sql.SQLSyntaxErrorException;
 import java.util.Collections;
 import java.util.EnumSet;
 import javax.persistence.Entity;
@@ -17,10 +18,12 @@ import javax.transaction.Transaction;
 import org.hibernate.boot.Metadata;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.registry.StandardServiceRegistry;
+import org.hibernate.boot.registry.internal.StandardServiceRegistryImpl;
 import org.hibernate.resource.transaction.backend.jta.internal.JtaTransactionCoordinatorBuilderImpl;
 import org.hibernate.resource.transaction.spi.TransactionCoordinatorBuilder;
 import org.hibernate.tool.schema.SourceType;
 import org.hibernate.tool.schema.TargetType;
+import org.hibernate.tool.schema.spi.CommandAcceptanceException;
 import org.hibernate.tool.schema.spi.SchemaCreator;
 import org.hibernate.tool.schema.spi.SchemaDropper;
 import org.hibernate.tool.schema.spi.SchemaManagementTool;
@@ -79,21 +82,25 @@ public class SchemaToolTransactionHandlingTest extends BaseUnitTestCase {
 			throw new RuntimeException( "Unable to access JTA Transaction prior to starting test", e );
 		}
 
+		final StandardServiceRegistry registry = buildJtaStandardServiceRegistry();
 		// perform the test...
 		try {
-			final StandardServiceRegistry registry = buildJtaStandardServiceRegistry();
 			final SchemaManagementTool smt = registry.getService( SchemaManagementTool.class );
 			final SchemaDropper schemaDropper = smt.getSchemaDropper( Collections.emptyMap() );
 			final SchemaCreator schemaCreator = smt.getSchemaCreator( Collections.emptyMap() );
 
 			final Metadata mappings = buildMappings( registry );
 			try {
-				schemaDropper.doDrop(
-						mappings,
-						ExecutionOptionsTestImpl.INSTANCE,
-						SourceDescriptorImpl.INSTANCE,
-						TargetDescriptorImpl.INSTANCE
-				);
+				try {
+					schemaDropper.doDrop(
+							mappings,
+							ExecutionOptionsTestImpl.INSTANCE,
+							SourceDescriptorImpl.INSTANCE,
+							TargetDescriptorImpl.INSTANCE
+					);
+				}catch (CommandAcceptanceException e){
+					//ignore may happen if sql drop does not support if exist
+				}
 				schemaCreator.doCreation(
 						mappings,
 						ExecutionOptionsTestImpl.INSTANCE,
@@ -118,6 +125,7 @@ public class SchemaToolTransactionHandlingTest extends BaseUnitTestCase {
 		finally {
 			try {
 				jtaTransaction.commit();
+				((StandardServiceRegistryImpl) registry).destroy();
 			}
 			catch (Exception e) {
 				// not much we can do...
@@ -146,9 +154,9 @@ public class SchemaToolTransactionHandlingTest extends BaseUnitTestCase {
 			throw new RuntimeException( "Unable to access JTA Transaction prior to starting test", e );
 		}
 
+		final StandardServiceRegistry registry = buildJtaStandardServiceRegistry();
 		// perform the test...
 		try {
-			final StandardServiceRegistry registry = buildJtaStandardServiceRegistry();
 			final SchemaManagementTool smt = registry.getService( SchemaManagementTool.class );
 
 			final Metadata mappings = buildMappings( registry );
@@ -189,6 +197,7 @@ public class SchemaToolTransactionHandlingTest extends BaseUnitTestCase {
 		finally {
 			try {
 				jtaTransaction.commit();
+				((StandardServiceRegistryImpl) registry).destroy();
 			}
 			catch (Exception e) {
 				// not much we can do...

@@ -49,6 +49,8 @@ public interface SessionFactoryOptionsState {
 
 	boolean isJtaTransactionAccessEnabled();
 
+	boolean isAllowRefreshDetachedEntity();
+
 	boolean isAllowOutOfTransactionUpdateOperations();
 
 	boolean isReleaseResourcesOnCloseEnabled();
@@ -115,7 +117,11 @@ public interface SessionFactoryOptionsState {
 
 	boolean isNamedQueryStartupCheckingEnabled();
 
+	boolean isConventionalJavaConstants();
+
 	boolean isProcedureParameterNullPassingEnabled();
+
+	boolean isCollectionJoinSubqueryRewriteEnabled();
 
 	boolean isSecondLevelCacheEnabled();
 
@@ -149,6 +155,8 @@ public interface SessionFactoryOptionsState {
 
 	PhysicalConnectionHandlingMode getPhysicalConnectionHandlingMode();
 
+	boolean connectionProviderDisablesAutoCommit();
+
 	/**
 	 * @deprecated Use {@link #getPhysicalConnectionHandlingMode()} instead
 	 */
@@ -168,4 +176,6 @@ public interface SessionFactoryOptionsState {
 	boolean isPreferUserTransaction();
 
 	TimeZone getJdbcTimeZone();
+
+	boolean isQueryParametersValidationEnabled();
 }

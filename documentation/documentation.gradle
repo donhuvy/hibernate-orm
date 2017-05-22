@@ -63,21 +63,19 @@ dependencies {
 	testCompile( project(':hibernate-testing') )
 
 	testCompile( libraries.mockito )
+	testCompile( libraries.mockito_inline )
 	testRuntime( libraries.h2 )
 	testRuntime( libraries.hsqldb )
 	testRuntime( libraries.postgresql )
 	testRuntime( libraries.mysql )
 	testRuntime( libraries.mariadb )
+	testRuntime( libraries.mssql )
 
 	if (db.equalsIgnoreCase("oracle")) {
 		dependencies {
-			testRuntime( libraries.oracle )
-		}
-	}
-
-	if (db.equalsIgnoreCase("mssql")) {
-		dependencies {
-			testRuntime( libraries.mssql )
+			testRuntime( libraries.oracle ) {
+				exclude group: 'com.oracle.jdbc', module: 'xmlparserv2'
+			}
 		}
 	}
 
@@ -239,7 +237,7 @@ task renderTopicalGuides(type: AsciidoctorTask, group: 'Documentation') {
 	backends "html5"
 	separateOutputDirs false
 	options logDocuments: true
-	attributes  icons: 'font', experimental: true, 'source-highlighter': 'prettify'
+	attributes  icons: 'font', experimental: true, 'source-highlighter': 'prettify', majorMinorVersion: rootProject.hibernateMajorMinorVersion, fullVersion: rootProject.hibernateFullVersion
 }
 
 

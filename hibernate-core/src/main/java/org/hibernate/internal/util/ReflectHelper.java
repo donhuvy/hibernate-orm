@@ -13,12 +13,16 @@ import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Locale;
+import java.util.regex.Pattern;
+
+import javax.persistence.Transient;
 
 import org.hibernate.AssertionFailure;
 import org.hibernate.MappingException;
 import org.hibernate.PropertyNotFoundException;
 import org.hibernate.boot.registry.classloading.spi.ClassLoaderService;
 import org.hibernate.boot.registry.classloading.spi.ClassLoadingException;
+import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.property.access.internal.PropertyAccessStrategyMixedImpl;
 import org.hibernate.property.access.spi.Getter;
 import org.hibernate.type.PrimitiveType;
@@ -29,9 +33,14 @@ import org.hibernate.type.Type;
  *
  * @author Gavin King
  * @author Steve Ebersole
+ * @author Chris Cranford
  */
 @SuppressWarnings("unchecked")
 public final class ReflectHelper {
+
+	private static final Pattern JAVA_CONSTANT_PATTERN = Pattern.compile(
+			"[a-z\\d]+\\.([A-Z]{1}[a-z\\d]+)+\\$?([A-Z]{1}[a-z\\d]+)*\\.[A-Z_\\$]+", Pattern.UNICODE_CHARACTER_CLASS);
+
 	public static final Class[] NO_PARAM_SIGNATURE = new Class[0];
 	public static final Object[] NO_PARAMS = new Object[0];
 
@@ -131,7 +140,7 @@ public final class ReflectHelper {
 	/**
 	 * Perform resolution of a class name.
 	 * <p/>
-	 * Here we first check the context classloader, if one, beforeQuery delegating to
+	 * Here we first check the context classloader, if one, before delegating to
 	 * {@link Class#forName(String, boolean, ClassLoader)} using the caller's classloader
 	 *
 	 * @param name The class name
@@ -229,9 +238,15 @@ public final class ReflectHelper {
 		return PropertyAccessStrategyMixedImpl.INSTANCE.buildPropertyAccess( clazz, name ).getGetter();
 	}
 
-	public static Object getConstantValue(String name, ClassLoaderService classLoaderService) {
+	public static Object getConstantValue(String name, SessionFactoryImplementor factory) {
+		boolean conventionalJavaConstants = factory.getSessionFactoryOptions().isConventionalJavaConstants();
 		Class clazz;
 		try {
+			if ( conventionalJavaConstants &&
+				!JAVA_CONSTANT_PATTERN.matcher( name ).find() ) {
+				return null;
+			}
+			ClassLoaderService classLoaderService = factory.getServiceRegistry().getService( ClassLoaderService.class );
 			clazz = classLoaderService.classForName( StringHelper.qualifier( name ) );
 		}
 		catch ( Throwable t ) {
@@ -331,7 +346,7 @@ public final class ReflectHelper {
 		throw new PropertyNotFoundException( "no appropriate constructor in class: " + clazz.getName() );
 
 	}
-	
+
 	public static Method getMethod(Class clazz, Method method) {
 		try {
 			return clazz.getMethod( method.getName(), method.getParameterTypes() );
@@ -395,12 +410,7 @@ public final class ReflectHelper {
 
 		// if no getter found yet, check all implemented interfaces
 		if ( getter == null ) {
-			for ( Class theInterface : containerClass.getInterfaces() ) {
-				getter = getGetterOrNull( theInterface, propertyName );
-				if ( getter != null ) {
-					break;
-				}
-			}
+			getter = getGetterOrNull( containerClass.getInterfaces(), propertyName );
 		}
 
 		if ( getter == null ) {
@@ -418,6 +428,19 @@ public final class ReflectHelper {
 		return getter;
 	}
 
+	private static Method getGetterOrNull(Class[] interfaces, String propertyName) {
+		Method getter = null;
+		for ( int i = 0; getter == null && i < interfaces.length; ++i ) {
+			final Class anInterface = interfaces[i];
+			getter = getGetterOrNull( anInterface, propertyName );
+			if ( getter == null ) {
+				// if no getter found yet, check all implemented interfaces of interface
+				getter = getGetterOrNull( anInterface.getInterfaces(), propertyName );
+			}
+		}
+		return getter;
+	}
+
 	private static Method getGetterOrNull(Class containerClass, String propertyName) {
 		for ( Method method : containerClass.getDeclaredMethods() ) {
 			// if the method has parameters, skip it
@@ -427,6 +450,10 @@ public final class ReflectHelper {
 
 			// if the method is a "bridge", skip it
 			if ( method.isBridge() ) {
+				continue;
+			}
+
+			if ( method.getAnnotation( Transient.class ) != null ) {
 				continue;
 			}
 
@@ -465,9 +492,11 @@ public final class ReflectHelper {
 		// verify that the Class does not also define a method with the same stem name with 'is'
 		try {
 			final Method isMethod = containerClass.getDeclaredMethod( "is" + stemName );
-			// No such method should throw the caught exception.  So if we get here, there was
-			// such a method.
-			checkGetAndIsVariants( containerClass, propertyName, getMethod, isMethod );
+			if ( isMethod.getAnnotation( Transient.class ) == null ) {
+				// No such method should throw the caught exception.  So if we get here, there was
+				// such a method.
+				checkGetAndIsVariants( containerClass, propertyName, getMethod, isMethod );
+			}
 		}
 		catch (NoSuchMethodException ignore) {
 		}
@@ -505,7 +534,9 @@ public final class ReflectHelper {
 			final Method getMethod = containerClass.getDeclaredMethod( "get" + stemName );
 			// No such method should throw the caught exception.  So if we get here, there was
 			// such a method.
-			checkGetAndIsVariants( containerClass, propertyName, getMethod, isMethod );
+			if ( getMethod.getAnnotation( Transient.class ) == null ) {
+				checkGetAndIsVariants( containerClass, propertyName, getMethod, isMethod );
+			}
 		}
 		catch (NoSuchMethodException ignore) {
 		}
@@ -527,12 +558,13 @@ public final class ReflectHelper {
 
 		// if no setter found yet, check all implemented interfaces
 		if ( setter == null ) {
-			for ( Class theInterface : containerClass.getInterfaces() ) {
-				setter = setterOrNull( theInterface, propertyName, propertyType );
-				if ( setter != null ) {
-					break;
-				}
-			}
+			setter = setterOrNull( containerClass.getInterfaces(), propertyName, propertyType );
+//			for ( Class theInterface : containerClass.getInterfaces() ) {
+//				setter = setterOrNull( theInterface, propertyName, propertyType );
+//				if ( setter != null ) {
+//					break;
+//				}
+//			}
 		}
 
 		if ( setter == null ) {
@@ -547,6 +579,19 @@ public final class ReflectHelper {
 		}
 
 		setter.setAccessible( true );
+		return setter;
+	}
+
+	private static Method setterOrNull(Class[] interfaces, String propertyName, Class propertyType) {
+		Method setter = null;
+		for ( int i = 0; setter == null && i < interfaces.length; ++i ) {
+			final Class anInterface = interfaces[i];
+			setter = setterOrNull( anInterface, propertyName, propertyType );
+			if ( setter == null ) {
+				// if no setter found yet, check all implemented interfaces of interface
+				setter = setterOrNull( anInterface.getInterfaces(), propertyName, propertyType );
+			}
+		}
 		return setter;
 	}
 

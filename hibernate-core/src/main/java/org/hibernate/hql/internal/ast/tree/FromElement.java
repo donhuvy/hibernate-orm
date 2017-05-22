@@ -70,7 +70,6 @@ public class FromElement extends HqlSqlWalkerNode implements DisplayableNode, Pa
 	private List<FromElement> destinations;
 	private boolean manyToMany;
 	private String withClauseFragment;
-	private String withClauseJoinAlias;
 	private boolean dereferencedBySuperclassProperty;
 	private boolean dereferencedBySubclassProperty;
 
@@ -341,14 +340,7 @@ public class FromElement extends HqlSqlWalkerNode implements DisplayableNode, Pa
 			throw new IllegalStateException( "No table alias for node " + this );
 		}
 
-		final String propertyName;
-		if ( getEntityPersister() != null && getEntityPersister().getEntityMetamodel() != null
-				&& getEntityPersister().getEntityMetamodel().hasNonIdentifierPropertyNamedId() ) {
-			propertyName = getEntityPersister().getIdentifierPropertyName();
-		}
-		else {
-			propertyName = EntityPersister.ENTITY_ID;
-		}
+		final String propertyName = getIdentifierPropertyName();
 
 		if ( getWalker().getStatementType() == HqlSqlTokenTypes.SELECT ) {
 			return getPropertyMapping( propertyName ).toColumns( table, propertyName );
@@ -536,6 +528,10 @@ public class FromElement extends HqlSqlWalkerNode implements DisplayableNode, Pa
 		return elementType.getCollectionPropertyReference( propertyName );
 	}
 
+	public String getIdentifierPropertyName() {
+		return elementType.getIdentifierPropertyName();
+	}
+
 	public void setFetch(boolean fetch) {
 		this.fetch = fetch;
 		// Fetch can't be used with scroll() or iterate().
@@ -629,12 +625,7 @@ public class FromElement extends HqlSqlWalkerNode implements DisplayableNode, Pa
 		return withClauseFragment;
 	}
 
-	public String getWithClauseJoinAlias() {
-		return withClauseJoinAlias;
-	}
-
-	public void setWithClauseFragment(String withClauseJoinAlias, String withClauseFragment) {
-		this.withClauseJoinAlias = withClauseJoinAlias;
+	public void setWithClauseFragment(String withClauseFragment) {
 		this.withClauseFragment = withClauseFragment;
 	}
 

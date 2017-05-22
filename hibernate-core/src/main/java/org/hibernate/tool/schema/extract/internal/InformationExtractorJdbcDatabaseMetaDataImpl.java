@@ -203,7 +203,6 @@ public class InformationExtractorJdbcDatabaseMetaDataImpl implements Information
 				isPhysicalTableType( resultSet.getString( "TABLE_TYPE" ) ),
 				resultSet.getString( "REMARKS" )
 		);
-		addColumns( tableInformation );
 		return tableInformation;
 	}
 
@@ -419,7 +418,15 @@ public class InformationExtractorJdbcDatabaseMetaDataImpl implements Information
 
 		if ( extractionContext.getJdbcEnvironment().getNameQualifierSupport().supportsCatalogs() ) {
 			if ( catalog == null ) {
-				catalogFilter = "";
+				String defaultCatalog = "";
+				if ( extractionContext.getJdbcEnvironment().getNameQualifierSupport().supportsCatalogs() ) {
+					try {
+						defaultCatalog = extractionContext.getJdbcConnection().getCatalog();
+					}
+					catch (SQLException ignore) {
+					}
+				}
+				catalogFilter = defaultCatalog;
 			}
 			else {
 				catalogToUse = catalog;
@@ -493,6 +500,7 @@ public class InformationExtractorJdbcDatabaseMetaDataImpl implements Information
 					else {
 						found = true;
 						tableInformation = extractTableInformation( resultSet );
+						addColumns( tableInformation );
 					}
 				}
 			}

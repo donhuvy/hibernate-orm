@@ -200,6 +200,9 @@ tokens
 	public void firstPathTokenWeakKeywords() throws TokenStreamException {
 	}
 
+	public void handlePrimaryExpressionDotIdent() throws TokenStreamException {
+	}
+
     /**
      * Manages the case of an optional FROM allowing the path to start with the "from" keyword
      */
@@ -456,7 +459,7 @@ propertyFetch
 //##     GROUP_BY path ( COMMA path )*;
 
 groupByClause
-	: GROUP^ 
+	: GROUP^
 		"by"! expression ( COMMA! expression )*
 		(havingClause)?
 	;
@@ -706,7 +709,7 @@ quantifiedExpression
 //      * method call ( '.' ident '(' exprList ') )
 //      * function : differentiated from method call via explicit keyword
 atom
-	: primaryExpression
+	: {handlePrimaryExpressionDotIdent();} primaryExpression
 		(
 			DOT^ identifier
 				( options { greedy=true; } :
@@ -727,7 +730,7 @@ primaryExpression
 	;
 
 jpaFunctionSyntax!
-    : i:IDENT OPEN n:QUOTED_STRING COMMA a:exprList CLOSE {
+    : i:IDENT OPEN n:QUOTED_STRING (COMMA a:exprList)? CLOSE {
     	final String functionName = unquote( #n.getText() );
 
     	if ( functionName.equalsIgnoreCase( "cast" ) ) {
@@ -785,7 +788,7 @@ vectorExpr
 // the method looks a head to find keywords after DOT and turns them into identifiers.
 identPrimary
     : i:identPrimaryBase { handleDotIdent(); }
-			( options { greedy=true; } : DOT^ ( identifier | ELEMENTS | o:OBJECT { #o.setType(IDENT); } ) )*
+			( options { greedy=true; } : DOT^ ( identifier { handleDotIdent(); }  | ELEMENTS | o:OBJECT { #o.setType(IDENT); } ) )*
 			( options { greedy=true; } :
 				( op:OPEN^ { #op.setType(METHOD_CALL);} e:exprList CLOSE! ) {
 				    AST path = #e.getFirstChild();
