@@ -204,8 +204,48 @@ include::{sourcedir}/GraphFetchingTest.java[tags=fetching-strategies-dynamic-fet
 
 [NOTE]
 ====
-Entity graphs are the way to override the EAGER fetching associations at runtime.
-With JPQL, if an EAGER association is omitted, Hibernate will issue a secondary select for every association needed to be fetched eagerly.
+Although the JPA standard specifies that you can override an EAGER fetching association at runtime using the `javax.persistence.fetchgraph` hint,
+currently, Hibernate does not implement this feature, so EAGER associations cannot be fetched lazily.
+For more info, check out the https://hibernate.atlassian.net/browse/HHH-8776[HHH-8776] Jira issue.
+
+When executing a JPQL query, if an EAGER association is omitted, Hibernate will issue a secondary select for every association needed to be fetched eagerly,
+which can lead dto N+1 query issues.
+
+For this reason, it's better to use LAZY associations, and only fetch them eagerly on a per-query basis.
+====
+
+[[fetching-strategies-dynamic-fetching-entity-subgraph]]
+==== JPA entity subgraphs
+
+An entity graph specifies which attributes to be fetched, but it limited to a single entity only.
+To fetch associations from a child entity, you need to use the http://docs.oracle.com/javaee/7/api/javax/persistence/NamedSubgraph.html[`@NamedSubgraph`] annotation.
+
+If we have a `Project` parent entity which has an `employees` child associations,
+and we'd like to fetch the `department` for the `Employee` child association.
+
+[[fetching-strategies-dynamic-fetching-entity-subgraph-mapping-example]]
+.Fetch graph with a subgraph mapping
+====
+[source, JAVA, indent=0]
+----
+include::{sourcedir}/GraphFetchingTest.java[tags=fetching-strategies-dynamic-fetching-entity-subgraph-mapping-example]
+----
+====
+
+When fetching this entity graph, Hibernate generates the following SQL query:
+
+[[fetching-strategies-dynamic-fetching-entity-subgraph-example]]
+.Fetch graph with a subgraph mapping
+====
+[source, JAVA, indent=0]
+----
+include::{sourcedir}/GraphFetchingTest.java[tags=fetching-strategies-dynamic-fetching-entity-subgraph-example]
+----
+
+[source, SQL, indent=0]
+----
+include::{extrasdir}/fetching-strategies-dynamic-fetching-entity-subgraph-example.sql[]
+----
 ====
 
 [[fetching-strategies-dynamic-fetching-profile]]

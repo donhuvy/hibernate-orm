@@ -206,6 +206,7 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 		if ( exists == null ) {
 			initialize( true );
 			if ( set.remove( value ) ) {
+				elementRemoved = true;
 				dirty();
 				return true;
 			}
@@ -214,6 +215,7 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 			}
 		}
 		else if ( exists ) {
+			elementRemoved = true;
 			queueOperation( new SimpleRemove( value ) );
 			return true;
 		}
@@ -266,6 +268,7 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 		if ( coll.size() > 0 ) {
 			initialize( true );
 			if ( set.removeAll( coll ) ) {
+				elementRemoved = true;
 				dirty();
 				return true;
 			}
@@ -326,8 +329,8 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 	public boolean endRead() {
 		set.addAll( tempList );
 		tempList = null;
-		setInitialized();
-		return true;
+		// ensure that operationQueue is considered
+		return super.endRead();
 	}
 
 	@Override
@@ -384,7 +387,7 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 		// note that it might be better to iterate the snapshot but this is safe,
 		// assuming the user implements equals() properly, as required by the Set
 		// contract!
-		return oldValue == null || elemType.isDirty( oldValue, entry, getSession() );
+		return ( oldValue == null && entry != null ) || elemType.isDirty( oldValue, entry, getSession() );
 	}
 
 	@Override
@@ -434,7 +437,7 @@ public class PersistentSet extends AbstractPersistentCollection implements java.
 	@Override
 	@SuppressWarnings("unchecked")
 	public boolean entryExists(Object key, int i) {
-		return true;
+		return key != null;
 	}
 
 	@Override

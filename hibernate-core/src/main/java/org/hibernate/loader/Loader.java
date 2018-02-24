@@ -67,6 +67,7 @@ import org.hibernate.internal.ScrollableResultsImpl;
 import org.hibernate.internal.util.StringHelper;
 import org.hibernate.internal.util.collections.CollectionHelper;
 import org.hibernate.loader.spi.AfterLoadAction;
+import org.hibernate.param.ParameterBinder;
 import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.persister.entity.Loadable;
@@ -235,21 +236,20 @@ public abstract class Loader {
 	protected String preprocessSQL(
 			String sql,
 			QueryParameters parameters,
-			Dialect dialect,
+			SessionFactoryImplementor sessionFactory,
 			List<AfterLoadAction> afterLoadActions) throws HibernateException {
+
+		Dialect dialect = sessionFactory.getServiceRegistry().getService( JdbcServices.class ).getDialect();
+
 		sql = applyLocks( sql, parameters, dialect, afterLoadActions );
 
-		// Keep this here, rather than moving to Select.  Some Dialects may need the hint to be appended to the very
-		// end or beginning of the finalized SQL statement, so wait until everything is processed.
-		if ( parameters.getQueryHints() != null && parameters.getQueryHints().size() > 0 ) {
-			sql = dialect.getQueryHintString( sql, parameters.getQueryHints() );
-		}
+		sql = dialect.addSqlHintOrComment(
+			sql,
+			parameters,
+			sessionFactory.getSessionFactoryOptions().isCommentsEnabled()
+		);
 
-		sql = processDistinctKeyword( sql, parameters);
-
-		return getFactory().getSessionFactoryOptions().isCommentsEnabled()
-				? prependComment( sql, parameters )
-				: sql;
+		return processDistinctKeyword( sql, parameters );
 	}
 
 	protected boolean shouldUseFollowOnLocking(
@@ -297,16 +297,6 @@ public abstract class Loader {
 			}
 		}
 		return lockModeToUse;
-	}
-
-	private String prependComment(String sql, QueryParameters parameters) {
-		String comment = parameters.getComment();
-		if ( comment == null ) {
-			return sql;
-		}
-		else {
-			return "/* " + comment + " */ " + sql;
-		}
 	}
 
 	/**
@@ -860,7 +850,21 @@ public abstract class Loader {
 					}
 				}
 			}
-			final Serializable resolvedId = (Serializable) idType.resolve( hydratedKeyState[i], session, null );
+			// If hydratedKeyState[i] is null, then we know the association should be null.
+			// Don't bother resolving the ID if hydratedKeyState[i] is null.
+
+			// Implementation note: if the ID is a composite ID, then resolving a null value will
+			// result in instantiating an empty composite if AvailableSettings#CREATE_EMPTY_COMPOSITES_ENABLED
+			// is true. By not resolving a null value for a composite ID, we avoid the overhead of instantiating
+			// an empty composite, checking if it is equivalent to null (it should be), then ultimately throwing
+			// out the empty value.
+			final Serializable resolvedId;
+			if ( hydratedKeyState[i] != null ) {
+				resolvedId = (Serializable) idType.resolve( hydratedKeyState[i], session, null );
+			}
+			else {
+				resolvedId = null;
+			}
 			keys[i] = resolvedId == null ? null : session.generateEntityKey( resolvedId, persisters[i] );
 		}
 	}
@@ -1906,7 +1910,7 @@ public abstract class Loader {
 		String sql = limitHandler.processSql( queryParameters.getFilteredSQL(), queryParameters.getRowSelection() );
 
 		// Adding locks and comments.
-		sql = preprocessSQL( sql, queryParameters, getFactory().getDialect(), afterLoadActions );
+		sql = preprocessSQL( sql, queryParameters, getFactory(), afterLoadActions );
 
 		final PreparedStatement st = prepareQueryStatement( sql, queryParameters, limitHandler, scroll, session );
 

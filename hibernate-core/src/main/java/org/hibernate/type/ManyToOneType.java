@@ -7,7 +7,6 @@
 package org.hibernate.type;
 
 import java.io.Serializable;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
@@ -113,18 +112,6 @@ public class ManyToOneType extends EntityType {
 		return requireIdentifierOrUniqueKeyType( mapping ).getColumnSpan( mapping );
 	}
 
-	private Type requireIdentifierOrUniqueKeyType(Mapping mapping) {
-		final Type fkTargetType = getIdentifierOrUniqueKeyType( mapping );
-		if ( fkTargetType == null ) {
-			throw new MappingException(
-					"Unable to determine FK target Type for many-to-one mapping: " +
-							"referenced-entity-name=[" + getAssociatedEntityName() +
-							"], referenced-entity-attribute-name=[" + getLHSPropertyName() + "]"
-			);
-		}
-		return fkTargetType;
-	}
-
 	@Override
 	public int[] sqlTypes(Mapping mapping) throws MappingException {
 		return requireIdentifierOrUniqueKeyType( mapping ).sqlTypes( mapping );
@@ -141,27 +128,6 @@ public class ManyToOneType extends EntityType {
 	}
 
 	@Override
-	public void nullSafeSet(
-			PreparedStatement st,
-			Object value,
-			int index,
-			boolean[] settable,
-			SharedSessionContractImplementor session) throws HibernateException, SQLException {
-		requireIdentifierOrUniqueKeyType( session.getFactory() )
-				.nullSafeSet( st, getIdentifier( value, session ), index, settable, session );
-	}
-
-	@Override
-	public void nullSafeSet(
-			PreparedStatement st,
-			Object value,
-			int index,
-			SharedSessionContractImplementor session) throws HibernateException, SQLException {
-		requireIdentifierOrUniqueKeyType( session.getFactory() )
-				.nullSafeSet( st, getIdentifier( value, session ), index, session );
-	}
-
-	@Override
 	public ForeignKeyDirection getForeignKeyDirection() {
 		return ForeignKeyDirection.FROM_PARENT;
 	}
@@ -175,8 +141,25 @@ public class ManyToOneType extends EntityType {
 		// return the (fully resolved) identifier value, but do not resolve
 		// to the actual referenced entity instance
 		// NOTE: the owner of the association is not really the owner of the id!
-		final Serializable id = (Serializable) getIdentifierOrUniqueKeyType( session.getFactory() )
-				.nullSafeGet( rs, names, session, null );
+
+		// First hydrate the ID to check if it is null.
+		// Don't bother resolving the ID if hydratedKeyState[i] is null.
+
+		// Implementation note: if id is a composite ID, then resolving a null value will
+		// result in instantiating an empty composite if AvailableSettings#CREATE_EMPTY_COMPOSITES_ENABLED
+		// is true. By not resolving a null value for a composite ID, we avoid the overhead of instantiating
+		// an empty composite, checking if it is equivalent to null (it should be), then ultimately throwing
+		// out the empty value.
+		final Object hydratedId = getIdentifierOrUniqueKeyType( session.getFactory() )
+				.hydrate( rs, names, session, null );
+		final Serializable id;
+		if ( hydratedId != null ) {
+			id = (Serializable) getIdentifierOrUniqueKeyType( session.getFactory() )
+					.resolve( hydratedId, session, null );
+		}
+		else {
+			id = null;
+		}
 		scheduleBatchLoadIfNeeded( id, session );
 		return id;
 	}

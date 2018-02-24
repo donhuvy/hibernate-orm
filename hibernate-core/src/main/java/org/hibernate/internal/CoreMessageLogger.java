@@ -24,6 +24,7 @@ import javax.transaction.SystemException;
 import org.hibernate.HibernateException;
 import org.hibernate.LockMode;
 import org.hibernate.cache.CacheException;
+import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.engine.jdbc.dialect.spi.DialectResolver;
 import org.hibernate.engine.jndi.JndiException;
@@ -1303,7 +1304,7 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unableToUnbindFactoryFromJndi(@Cause JndiException e);
 
 	@Message(value = "Could not update hi value in: %s", id = 375)
-	Object unableToUpdateHiValue(String tableName);
+	String unableToUpdateHiValue(String tableName);
 
 	@LogMessage(level = ERROR)
 	@Message(value = "Could not updateQuery hi value in: %s", id = 376)
@@ -1431,10 +1432,6 @@ public interface CoreMessageLogger extends BasicLogger {
 	@LogMessage(level = INFO)
 	@Message(value = "Using java.io streams to persist binary types", id = 407)
 	void usingStreams();
-
-	@LogMessage(level = INFO)
-	@Message(value = "Using workaround for JVM bug in java.sql.Timestamp", id = 408)
-	void usingTimestampWorkaround();
 
 	@LogMessage(level = WARN)
 	@Message(value = "Using %s which does not generate IETF RFC 4122 compliant UUID values; consider using %s instead",
@@ -1771,6 +1768,37 @@ public interface CoreMessageLogger extends BasicLogger {
 	void unknownJavaTypeNoEqualsHashCode(Class javaType);
 
 	@LogMessage(level = WARN)
-	@Message(value = "@javax.persistence.Cacheable or @org.hibernate.annotations.Cache used on a non-root entity: ignored for %s", id = 482)
+	@Message(value = "@org.hibernate.annotations.Cache used on a non-root entity: ignored for %s", id = 482)
 	void cacheOrCacheableAnnotationOnNonRoot(String className);
+
+	@LogMessage(level = WARN)
+	@Message(
+			id = 483,
+			value = "An experimental feature has been enabled (" +
+					AvailableSettings.CREATE_EMPTY_COMPOSITES_ENABLED +
+					"=true) that instantiates empty composite/embedded " +
+					"objects when all of its attribute values are null. This feature has known issues and " +
+					"should not be used in production until it is stabilized. See Hibernate Jira " +
+					"issue HHH-11936 for details."
+	)
+	void emptyCompositesEnabled();
+
+	@LogMessage(level = WARN)
+	@Message(value = "Vibur properties were encountered, but the Vibur ConnectionProvider was not found on the classpath; these properties are going to be ignored.",
+			id = 484)
+	void viburProviderClassNotFound();
+
+	@LogMessage(level = ERROR)
+	@Message(value = "Illegally attempted to associate a proxy for entity [%s] with id [%s] with two open sessions.", id = 485)
+	void attemptToAssociateProxyWithTwoOpenSessions(
+			String entityName,
+			Object id
+	);
+
+	@LogMessage(level = WARN)
+	@Message(value = "Agroal properties were encountered, but the Agroal ConnectionProvider was not found on the classpath; these properties are going to be ignored.",
+			id = 486)
+	void agroalProviderClassNotFound();
+
+
 }
