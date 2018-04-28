@@ -19,7 +19,7 @@ import org.hibernate.engine.jdbc.spi.JdbcServices;
 import org.hibernate.engine.transaction.jta.platform.spi.JtaPlatform;
 import org.hibernate.engine.transaction.spi.IsolationDelegate;
 import org.hibernate.engine.transaction.spi.TransactionObserver;
-import org.hibernate.jpa.JpaCompliance;
+import org.hibernate.jpa.spi.JpaCompliance;
 import org.hibernate.resource.jdbc.spi.JdbcSessionContext;
 import org.hibernate.resource.jdbc.spi.JdbcSessionOwner;
 import org.hibernate.resource.transaction.TransactionRequiredForJoinException;
@@ -172,6 +172,9 @@ public class JtaTransactionCoordinatorImpl implements TransactionCoordinator, Sy
 		getSynchronizationCallbackCoordinator().synchronizationRegistered();
 		synchronizationRegistered = true;
 		log.debug( "Hibernate RegisteredSynchronization successfully registered with JTA platform" );
+
+		// report entering into a "transactional context"
+		getTransactionCoordinatorOwner().startTransactionBoundary();
 	}
 
 	@Override

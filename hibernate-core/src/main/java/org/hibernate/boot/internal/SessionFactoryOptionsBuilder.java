@@ -31,10 +31,12 @@ import org.hibernate.boot.SchemaAutoTooling;
 import org.hibernate.boot.TempTableDdlTransactionHandling;
 import org.hibernate.boot.registry.StandardServiceRegistry;
 import org.hibernate.boot.registry.selector.spi.StrategySelector;
+import org.hibernate.boot.spi.BootstrapContext;
 import org.hibernate.boot.spi.SessionFactoryOptions;
-import org.hibernate.cache.internal.StandardQueryCacheFactory;
-import org.hibernate.cache.spi.QueryCacheFactory;
+import org.hibernate.cache.internal.NoCachingRegionFactory;
+import org.hibernate.cache.internal.StandardTimestampsCacheFactory;
 import org.hibernate.cache.spi.RegionFactory;
+import org.hibernate.cache.spi.TimestampsCacheFactory;
 import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.cfg.BaselineSessionEventsListenerBuilder;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
@@ -44,12 +46,14 @@ import org.hibernate.engine.config.spi.ConfigurationService;
 import org.hibernate.engine.jdbc.env.spi.ExtractedDatabaseMetaData;
 import org.hibernate.engine.jdbc.spi.JdbcServices;
 import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
+import org.hibernate.id.uuid.LocalObjectUuidHelper;
 import org.hibernate.internal.log.DeprecationLogger;
 import org.hibernate.internal.util.config.ConfigurationHelper;
-import org.hibernate.jpa.JpaCompliance;
-import org.hibernate.jpa.spi.JpaComplianceImpl;
+import org.hibernate.jpa.spi.JpaCompliance;
+import org.hibernate.jpa.spi.MutableJpaCompliance;
 import org.hibernate.loader.BatchFetchStyle;
 import org.hibernate.proxy.EntityNotFoundDelegate;
+import org.hibernate.query.ImmutableEntityUpdateQueryHandlingMode;
 import org.hibernate.query.criteria.LiteralHandlingMode;
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
@@ -83,7 +87,9 @@ import static org.hibernate.cfg.AvailableSettings.FAIL_ON_PAGINATION_OVER_COLLEC
 import static org.hibernate.cfg.AvailableSettings.FLUSH_BEFORE_COMPLETION;
 import static org.hibernate.cfg.AvailableSettings.GENERATE_STATISTICS;
 import static org.hibernate.cfg.AvailableSettings.HQL_BULK_ID_STRATEGY;
+import static org.hibernate.cfg.AvailableSettings.IMMUTABLE_ENTITY_UPDATE_QUERY_HANDLING_MODE;
 import static org.hibernate.cfg.AvailableSettings.INTERCEPTOR;
+import static org.hibernate.cfg.AvailableSettings.IN_CLAUSE_PARAMETER_PADDING;
 import static org.hibernate.cfg.AvailableSettings.JDBC_TIME_ZONE;
 import static org.hibernate.cfg.AvailableSettings.JDBC_TYLE_PARAMS_ZERO_BASE;
 import static org.hibernate.cfg.AvailableSettings.JTA_TRACK_BY_THREAD;
@@ -128,9 +134,11 @@ import static org.hibernate.jpa.AvailableSettings.DISCARD_PC_ON_CLOSE;
  *
  * @author Steve Ebersole
  */
+@SuppressWarnings("WeakerAccess")
 public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	private static final Logger log = Logger.getLogger( SessionFactoryOptionsBuilder.class );
 
+	private final String uuid = LocalObjectUuidHelper.generateLocalObjectUuid();
 	private final StandardServiceRegistry serviceRegistry;
 
 	// integration
@@ -197,7 +205,7 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	// Caching
 	private boolean secondLevelCacheEnabled;
 	private boolean queryCacheEnabled;
-	private QueryCacheFactory queryCacheFactory;
+	private TimestampsCacheFactory timestampsCacheFactory;
 	private String cacheRegionPrefix;
 	private boolean minimalPutsEnabled;
 	private boolean structuredCacheEntriesEnabled;
@@ -220,16 +228,19 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	private TimeZone jdbcTimeZone;
 	private boolean queryParametersValidationEnabled;
 	private LiteralHandlingMode criteriaLiteralHandlingMode;
+	private ImmutableEntityUpdateQueryHandlingMode immutableEntityUpdateQueryHandlingMode;
 
 	private Map<String, SQLFunction> sqlFunctions;
 
-	private JpaComplianceImpl jpaCompliance;
+	private JpaCompliance jpaCompliance;
 
 	private boolean failOnPaginationOverCollectionFetchEnabled;
+	private boolean inClauseParameterPaddingEnabled;
 
 	@SuppressWarnings({"WeakerAccess", "deprecation"})
-	public SessionFactoryOptionsBuilder(StandardServiceRegistry serviceRegistry) {
+	public SessionFactoryOptionsBuilder(StandardServiceRegistry serviceRegistry, BootstrapContext context) {
 		this.serviceRegistry = serviceRegistry;
+		this.jpaBootstrap = context.isJpaBootstrap();
 
 		final StrategySelector strategySelector = serviceRegistry.getService( StrategySelector.class );
 		ConfigurationService cfgService = serviceRegistry.getService( ConfigurationService.class );
@@ -240,8 +251,10 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 		configurationSettings.putAll( jdbcServices.getJdbcEnvironment().getDialect().getDefaultProperties() );
 		//noinspection unchecked
 		configurationSettings.putAll( cfgService.getSettings() );
-		cfgService = new ConfigurationServiceImpl( configurationSettings );
-		( (ConfigurationServiceImpl) cfgService ).injectServices( (ServiceRegistryImplementor) serviceRegistry );
+		if ( cfgService == null ) {
+			cfgService = new ConfigurationServiceImpl( configurationSettings );
+			( (ConfigurationServiceImpl) cfgService ).injectServices( (ServiceRegistryImplementor) serviceRegistry );
+		}
 
 		this.beanManagerReference = configurationSettings.get( "javax.persistence.bean.manager" );
 		this.validatorFactoryReference = configurationSettings.get( "javax.persistence.validation.factory" );
@@ -329,25 +342,42 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 		this.procedureParameterNullPassingEnabled = cfgService.getSetting( PROCEDURE_NULL_PARAM_PASSING, BOOLEAN, false );
 		this.collectionJoinSubqueryRewriteEnabled = cfgService.getSetting( COLLECTION_JOIN_SUBQUERY, BOOLEAN, true );
 
-		this.secondLevelCacheEnabled = cfgService.getSetting( USE_SECOND_LEVEL_CACHE, BOOLEAN, true );
-		this.queryCacheEnabled = cfgService.getSetting( USE_QUERY_CACHE, BOOLEAN, false );
-		this.queryCacheFactory = strategySelector.resolveDefaultableStrategy(
-				QueryCacheFactory.class,
-				configurationSettings.get( QUERY_CACHE_FACTORY ),
-				StandardQueryCacheFactory.INSTANCE
-		);
-		this.cacheRegionPrefix = ConfigurationHelper.extractPropertyValue(
-				CACHE_REGION_PREFIX,
-				configurationSettings
-		);
-		this.minimalPutsEnabled = cfgService.getSetting(
-				USE_MINIMAL_PUTS,
-				BOOLEAN,
-				serviceRegistry.getService( RegionFactory.class ).isMinimalPutsEnabledByDefault()
-		);
-		this.structuredCacheEntriesEnabled = cfgService.getSetting( USE_STRUCTURED_CACHE, BOOLEAN, false );
-		this.directReferenceCacheEntriesEnabled = cfgService.getSetting( USE_DIRECT_REFERENCE_CACHE_ENTRIES,BOOLEAN, false );
-		this.autoEvictCollectionCache = cfgService.getSetting( AUTO_EVICT_COLLECTION_CACHE, BOOLEAN, false );
+		final RegionFactory regionFactory = serviceRegistry.getService( RegionFactory.class );
+		if ( !NoCachingRegionFactory.class.isInstance( regionFactory ) ) {
+			this.secondLevelCacheEnabled = cfgService.getSetting( USE_SECOND_LEVEL_CACHE, BOOLEAN, true );
+			this.queryCacheEnabled = cfgService.getSetting( USE_QUERY_CACHE, BOOLEAN, false );
+			this.timestampsCacheFactory = strategySelector.resolveDefaultableStrategy(
+					TimestampsCacheFactory.class,
+					configurationSettings.get( QUERY_CACHE_FACTORY ),
+					StandardTimestampsCacheFactory.INSTANCE
+			);
+			this.cacheRegionPrefix = ConfigurationHelper.extractPropertyValue(
+					CACHE_REGION_PREFIX,
+					configurationSettings
+			);
+			this.minimalPutsEnabled = cfgService.getSetting(
+					USE_MINIMAL_PUTS,
+					BOOLEAN,
+					regionFactory.isMinimalPutsEnabledByDefault()
+			);
+			this.structuredCacheEntriesEnabled = cfgService.getSetting( USE_STRUCTURED_CACHE, BOOLEAN, false );
+			this.directReferenceCacheEntriesEnabled = cfgService.getSetting(
+					USE_DIRECT_REFERENCE_CACHE_ENTRIES,
+					BOOLEAN,
+					false
+			);
+			this.autoEvictCollectionCache = cfgService.getSetting( AUTO_EVICT_COLLECTION_CACHE, BOOLEAN, false );
+		}
+		else {
+			this.secondLevelCacheEnabled = false;
+			this.queryCacheEnabled = false;
+			this.timestampsCacheFactory = null;
+			this.cacheRegionPrefix = null;
+			this.minimalPutsEnabled = false;
+			this.structuredCacheEntriesEnabled = false;
+			this.directReferenceCacheEntriesEnabled = false;
+			this.autoEvictCollectionCache = false;
+		}
 
 		try {
 			this.schemaAutoTooling = SchemaAutoTooling.interpret( (String) configurationSettings.get( AvailableSettings.HBM2DDL_AUTO ) );
@@ -448,10 +478,20 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 		);
 
 		// added the boolean parameter in case we want to define some form of "all" as discussed
-		this.jpaCompliance = new JpaComplianceImpl( configurationSettings, false );
+		this.jpaCompliance = context.getJpaCompliance();
 
 		this.failOnPaginationOverCollectionFetchEnabled = ConfigurationHelper.getBoolean(
 				FAIL_ON_PAGINATION_OVER_COLLECTION_FETCH,
+				configurationSettings,
+				false
+		);
+
+		this.immutableEntityUpdateQueryHandlingMode = ImmutableEntityUpdateQueryHandlingMode.interpret(
+			configurationSettings.get( IMMUTABLE_ENTITY_UPDATE_QUERY_HANDLING_MODE )
+		);
+
+		this.inClauseParameterPaddingEnabled =  ConfigurationHelper.getBoolean(
+				IN_CLAUSE_PARAMETER_PADDING,
 				configurationSettings,
 				false
 		);
@@ -591,6 +631,11 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// SessionFactoryOptionsState
+
+	@Override
+	public String getUuid() {
+		return this.uuid;
+	}
 
 	@Override
 	public StandardServiceRegistry getServiceRegistry() {
@@ -804,8 +849,8 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	}
 
 	@Override
-	public QueryCacheFactory getQueryCacheFactory() {
-		return queryCacheFactory;
+	public TimestampsCacheFactory getTimestampsCacheFactory() {
+		return timestampsCacheFactory;
 	}
 
 	@Override
@@ -934,6 +979,11 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	}
 
 	@Override
+	public ImmutableEntityUpdateQueryHandlingMode getImmutableEntityUpdateQueryHandlingMode() {
+		return immutableEntityUpdateQueryHandlingMode;
+	}
+
+	@Override
 	public boolean jdbcStyleParamsZeroBased() {
 		return this.jdbcStyleParamsZeroBased;
 	}
@@ -944,11 +994,14 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	}
 
 	@Override
+	public boolean inClauseParameterPaddingEnabled() {
+		return this.inClauseParameterPaddingEnabled;
+	}
+
+	@Override
 	public JpaCompliance getJpaCompliance() {
 		return jpaCompliance;
 	}
-
-
 
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// In-flight mutation access
@@ -1102,8 +1155,8 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 		this.queryCacheEnabled = enabled;
 	}
 
-	public void applyQueryCacheFactory(QueryCacheFactory factory) {
-		this.queryCacheFactory = factory;
+	public void applyTimestampsCacheFactory(TimestampsCacheFactory factory) {
+		this.timestampsCacheFactory = factory;
 	}
 
 	public void applyCacheRegionPrefix(String prefix) {
@@ -1179,7 +1232,7 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 
 	public void applySqlFunction(String registrationName, SQLFunction sqlFunction) {
 		if ( this.sqlFunctions == null ) {
-			this.sqlFunctions = new HashMap<String, SQLFunction>();
+			this.sqlFunctions = new HashMap<>();
 		}
 		this.sqlFunctions.put( registrationName, sqlFunction );
 	}
@@ -1197,31 +1250,35 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	}
 
 	public void enableJpaQueryCompliance(boolean enabled) {
-		this.jpaCompliance.setQueryCompliance( enabled );
+		mutableJpaCompliance().setQueryCompliance( enabled );
+	}
+
+	private MutableJpaCompliance mutableJpaCompliance() {
+		if ( ! MutableJpaCompliance.class.isInstance( this.jpaCompliance ) ) {
+			throw new IllegalStateException( "JpaCompliance is no longer mutable" );
+		}
+
+		return (MutableJpaCompliance) this.jpaCompliance;
 	}
 
 	public void enableJpaTransactionCompliance(boolean enabled) {
-		this.jpaCompliance.setTransactionCompliance( enabled );
+		mutableJpaCompliance().setTransactionCompliance( enabled );
 	}
 
 	public void enableJpaListCompliance(boolean enabled) {
-		this.jpaCompliance.setListCompliance( enabled );
+		mutableJpaCompliance().setListCompliance( enabled );
 	}
 
 	public void enableJpaClosedCompliance(boolean enabled) {
-		this.jpaCompliance.setClosedCompliance( enabled );
+		mutableJpaCompliance().setClosedCompliance( enabled );
 	}
 
 	public void enableJpaProxyCompliance(boolean enabled) {
-		this.jpaCompliance.setProxyCompliance( enabled );
+		mutableJpaCompliance().setProxyCompliance( enabled );
 	}
 
 	public void enableJpaCachingCompliance(boolean enabled) {
-		this.jpaCompliance.setCachingCompliance( enabled );
-	}
-
-	public void markAsJpaBootstrap() {
-		this.jpaBootstrap = true;
+		mutableJpaCompliance().setCachingCompliance( enabled );
 	}
 
 	public void disableRefreshDetachedEntity() {
@@ -1237,6 +1294,10 @@ public class SessionFactoryOptionsBuilder implements SessionFactoryOptions {
 	}
 
 	public SessionFactoryOptions buildOptions() {
+		if ( MutableJpaCompliance.class.isInstance( this.jpaCompliance ) ) {
+			this.jpaCompliance = mutableJpaCompliance().immutableCopy();
+		}
+
 		return this;
 	}
 

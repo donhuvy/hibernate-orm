@@ -17,14 +17,15 @@ import org.hibernate.SessionFactoryObserver;
 import org.hibernate.boot.SchemaAutoTooling;
 import org.hibernate.boot.TempTableDdlTransactionHandling;
 import org.hibernate.boot.registry.StandardServiceRegistry;
-import org.hibernate.cache.spi.QueryCacheFactory;
+import org.hibernate.cache.spi.TimestampsCacheFactory;
 import org.hibernate.cfg.BaselineSessionEventsListenerBuilder;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.dialect.function.SQLFunction;
 import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
-import org.hibernate.jpa.JpaCompliance;
+import org.hibernate.jpa.spi.JpaCompliance;
 import org.hibernate.loader.BatchFetchStyle;
 import org.hibernate.proxy.EntityNotFoundDelegate;
+import org.hibernate.query.ImmutableEntityUpdateQueryHandlingMode;
 import org.hibernate.query.criteria.LiteralHandlingMode;
 import org.hibernate.resource.jdbc.spi.PhysicalConnectionHandlingMode;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
@@ -49,6 +50,11 @@ public class AbstractDelegatingSessionFactoryOptions implements SessionFactoryOp
 
 	protected SessionFactoryOptions delegate() {
 		return delegate;
+	}
+
+	@Override
+	public String getUuid() {
+		return delegate().getUuid();
 	}
 
 	@Override
@@ -252,8 +258,8 @@ public class AbstractDelegatingSessionFactoryOptions implements SessionFactoryOp
 	}
 
 	@Override
-	public QueryCacheFactory getQueryCacheFactory() {
-		return delegate.getQueryCacheFactory();
+	public TimestampsCacheFactory getTimestampsCacheFactory() {
+		return delegate.getTimestampsCacheFactory();
 	}
 
 	@Override
@@ -405,5 +411,15 @@ public class AbstractDelegatingSessionFactoryOptions implements SessionFactoryOp
 	@Override
 	public boolean isFailOnPaginationOverCollectionFetchEnabled() {
 		return delegate.isFailOnPaginationOverCollectionFetchEnabled();
+	}
+
+	@Override
+	public ImmutableEntityUpdateQueryHandlingMode getImmutableEntityUpdateQueryHandlingMode() {
+		return delegate.getImmutableEntityUpdateQueryHandlingMode();
+	}
+
+	@Override
+	public boolean inClauseParameterPaddingEnabled() {
+		return delegate.inClauseParameterPaddingEnabled();
 	}
 }

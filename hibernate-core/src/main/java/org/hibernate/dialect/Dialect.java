@@ -2130,13 +2130,13 @@ public abstract class Dialect implements ConversionContext {
 		res.append( " add constraint " )
 				.append( quote( constraintName ) )
 				.append( " foreign key (" )
-				.append( StringHelper.join( ", ", foreignKey ) )
+				.append( String.join( ", ", foreignKey ) )
 				.append( ") references " )
 				.append( referencedTable );
 
 		if ( !referencesPrimaryKey ) {
 			res.append( " (" )
-					.append( StringHelper.join( ", ", primaryKey ) )
+					.append( String.join( ", ", primaryKey ) )
 					.append( ')' );
 		}
 
@@ -2671,7 +2671,7 @@ public abstract class Dialect implements ConversionContext {
 	}
 
 	/**
-	 * Return the limit that the underlying database places on the number elements in an {@code IN} predicate.
+	 * Return the limit that the underlying database places on the number of elements in an {@code IN} predicate.
 	 * If the database defines no such limits, simply return zero or less-than-zero.
 	 *
 	 * @return int The limit, or zero-or-less to indicate no limit.
@@ -2684,7 +2684,7 @@ public abstract class Dialect implements ConversionContext {
 	 * HHH-4635
 	 * Oracle expects all Lob values to be last in inserts and updates.
 	 *
-	 * @return boolean True of Lob values should be last, false if it
+	 * @return boolean True if Lob values should be last, false if it
 	 * does not matter.
 	 */
 	public boolean forceLobAsLastValue() {
@@ -2797,7 +2797,7 @@ public abstract class Dialect implements ConversionContext {
 	 * @return The modified SQL
 	 */
 	public String getQueryHintString(String query, List<String> hintList) {
-		final String hints = StringHelper.join( ", ", hintList.iterator() );
+		final String hints = String.join( ", ", hintList );
 
 		if ( StringHelper.isEmpty( hints ) ) {
 			return query;
@@ -2985,7 +2985,7 @@ public abstract class Dialect implements ConversionContext {
 		if ( parameters.getQueryHints() != null && parameters.getQueryHints().size() > 0 ) {
 			sql = getQueryHintString( sql, parameters.getQueryHints() );
 		}
-		else if ( commentsEnabled && parameters.getComment() != null ){
+		if ( commentsEnabled && parameters.getComment() != null ){
 			sql = prependComment( sql, parameters.getComment() );
 		}
 

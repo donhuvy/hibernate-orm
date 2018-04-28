@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -29,6 +30,7 @@ import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.engine.spi.TypedValue;
 import org.hibernate.internal.CoreLogging;
 import org.hibernate.internal.CoreMessageLogger;
+import org.hibernate.internal.util.MathHelper;
 import org.hibernate.internal.util.StringHelper;
 import org.hibernate.internal.util.collections.ArrayHelper;
 import org.hibernate.internal.util.collections.CollectionHelper;
@@ -55,6 +57,8 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 	private final boolean queryParametersValidationEnabled;
 
 	private final int ordinalParamValueOffset;
+
+	private final int jdbcStyleOrdinalCountBase;
 
 	private Map<QueryParameter, QueryParameterBinding> parameterBindingMap;
 	private Map<QueryParameter, QueryParameterListBinding> parameterListBindingMap;
@@ -84,6 +88,8 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 		this.queryParametersValidationEnabled = queryParametersValidationEnabled;
 
 		this.parameterBindingMap = CollectionHelper.concurrentMap( parameterMetadata.getParameterCount() );
+
+		this.jdbcStyleOrdinalCountBase = sessionFactory.getSessionFactoryOptions().jdbcStyleParamsZeroBased() ? 0 : 1;
 
 		if ( parameterMetadata.hasPositionalParameters() ) {
 			int smallestOrdinalParamLabel = Integer.MAX_VALUE;
@@ -516,12 +522,29 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 		final Dialect dialect = session.getFactory().getServiceRegistry().getService( JdbcServices.class ).getJdbcEnvironment().getDialect();
 		final int inExprLimit = dialect.getInExpressionCountLimit();
 
+		int maxOrdinalPosition = getMaxOrdinalPosition();
+
 		for ( Map.Entry<QueryParameter, QueryParameterListBinding> entry : parameterListBindingMap.entrySet() ) {
 			final QueryParameter sourceParam = entry.getKey();
 			final Collection bindValues = entry.getValue().getBindValues();
 
-			if ( inExprLimit > 0 && bindValues.size() > inExprLimit ) {
-				log.tooManyInExpressions( dialect.getClass().getName(), inExprLimit, sourceParam.getName(), bindValues.size() );
+			int bindValueCount = bindValues.size();
+			int bindValueMaxCount = bindValueCount;
+
+			boolean inClauseParameterPaddingEnabled =
+					session.getFactory().getSessionFactoryOptions().inClauseParameterPaddingEnabled() &&
+					bindValueCount > 2;
+
+			if ( inClauseParameterPaddingEnabled ) {
+				int bindValuePaddingCount = MathHelper.ceilingPowerOfTwo( bindValueCount );
+
+				if ( bindValueCount < bindValuePaddingCount && (inExprLimit == 0 || bindValuePaddingCount < inExprLimit) ) {
+					bindValueMaxCount = bindValuePaddingCount;
+				}
+			}
+
+			if ( inExprLimit > 0 && bindValueCount > inExprLimit ) {
+				log.tooManyInExpressions( dialect.getClass().getName(), inExprLimit, sourceParam.getName(), bindValueCount );
 			}
 
 			final String sourceToken;
@@ -532,7 +555,7 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 				sourceToken = "?" + OrdinalParameterDescriptor.class.cast( sourceParam ).getPosition();
 			}
 
-			final int loc = queryString.indexOf( sourceToken );
+			final int loc = StringHelper.indexOfIdentifierWord( queryString, sourceToken );
 
 			if ( loc < 0 ) {
 				continue;
@@ -558,36 +581,60 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 
 			StringBuilder expansionList = new StringBuilder();
 
-			int i = 0;
-			for ( Object bindValue : entry.getValue().getBindValues() ) {
+			Iterator bindValueIterator = entry.getValue().getBindValues().iterator();
+			Object bindValue = null;
+
+			for ( int i = 0; i < bindValueMaxCount; i++ ) {
+
+				if ( i < bindValueCount ) {
+					bindValue = bindValueIterator.next();
+				}
+
 				if ( i > 0 ) {
 					expansionList.append( ", " );
 				}
 
-				// for each value in the bound list-of-values we:
-				//		1) create a synthetic named parameter
-				//		2) expand the queryString to include each synthetic named param in place of the original
-				//		3) create a new synthetic binding for just that single value under the synthetic name
-				final String syntheticName;
+				final QueryParameter syntheticParam;
 				if ( sourceParam instanceof NamedParameterDescriptor ) {
-					syntheticName = NamedParameterDescriptor.class.cast( sourceParam ).getName() + '_' + i;
+					// in the case of a named parameter, for each value in the bound list-of-values we:
+					//		1) create a synthetic named parameter
+					//		2) expand the queryString to include each synthetic named param in place of the original
+					//		3) create a new synthetic binding for just that single value under the synthetic name
+
+					final String syntheticName = NamedParameterDescriptor.class.cast( sourceParam ).getName() + '_' + i;
+					expansionList.append( ":" ).append( syntheticName );
+
+					syntheticParam = new NamedParameterDescriptor(
+							syntheticName,
+							sourceParam.getType(),
+							sourceParam.getSourceLocations()
+					);
 				}
 				else {
-					syntheticName = "x" + OrdinalParameterDescriptor.class.cast( sourceParam ).getPosition() + '_' + i;
+					// in the case of an ordinal parameter, for each value in the bound list-of-values we:
+					//		1) create a new ordinal parameter at a synthetic position of maxOrdinalPosition + 1
+					//		2) expand the queryString to include each new ordinal param in place of the original
+					//		3) create a new ordinal binding for just that single value under the synthetic position
+					// for the first item, we reuse the original parameter to avoid gaps in the positions
+					if ( i == 0 ) {
+						syntheticParam = sourceParam;
+					}
+					else {
+						int syntheticPosition = ++maxOrdinalPosition;
+						syntheticParam = new OrdinalParameterDescriptor(
+								syntheticPosition,
+								syntheticPosition - jdbcStyleOrdinalCountBase,
+								sourceParam.getType(),
+								sourceParam.getSourceLocations()
+						);
+					}
+
+					expansionList.append( "?" ).append( syntheticParam.getPosition() );
 				}
-
-				expansionList.append( ":" ).append( syntheticName );
-
-				final QueryParameter syntheticParam = new NamedParameterDescriptor(
-						syntheticName,
-						sourceParam.getType(),
-						sourceParam.getSourceLocations()
-				);
 
 				final QueryParameterBinding syntheticBinding = makeBinding( entry.getValue().getBindType() );
 				syntheticBinding.setBindValue( bindValue );
 				parameterBindingMap.put( syntheticParam, syntheticBinding );
-				i++;
 			}
 
 			queryString = StringHelper.replace(
@@ -600,10 +647,21 @@ public class QueryParameterBindingsImpl implements QueryParameterBindings {
 			);
 		}
 
-		if ( parameterListBindingMap != null ) {
-			parameterListBindingMap.clear();
-		}
-
 		return queryString;
+	}
+
+	private int getMaxOrdinalPosition() {
+		int maxOrdinalPosition = 0;
+		for ( QueryParameter<?> queryParameter : parameterBindingMap.keySet() ) {
+			if ( queryParameter instanceof OrdinalParameterDescriptor ) {
+				maxOrdinalPosition = Math.max( maxOrdinalPosition, queryParameter.getPosition() );
+			}
+		}
+		for ( QueryParameter<?> queryParameter : parameterListBindingMap.keySet() ) {
+			if ( queryParameter instanceof OrdinalParameterDescriptor ) {
+				maxOrdinalPosition = Math.max( maxOrdinalPosition, queryParameter.getPosition() );
+			}
+		}
+		return maxOrdinalPosition;
 	}
 }

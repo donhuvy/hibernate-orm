@@ -231,17 +231,6 @@ class MergeContext implements Map {
 			throw new NullPointerException( "null merge and managed entities are not supported by " + getClass().getName() );
 		}
 
-		// Detect invalid 'managed entity' -> 'managed entity' mappings where key != value
-		if ( managedToMergeEntityXref.containsKey( mergeEntity ) ) {
-			if ( managedToMergeEntityXref.get( mergeEntity ) != mergeEntity ) {
-				throw new IllegalStateException(
-						"MergeContext#attempt to create managed -> managed mapping with different entities: "
-								+ printEntity( mergeEntity ) + "; " + printEntity(
-								managedEntity )
-				);
-			}
-		}
-
 		Object oldManagedEntity = mergeToManagedEntityXref.put( mergeEntity, managedEntity );
 		Boolean oldOperatedOn = mergeEntityToOperatedOnFlagMap.put( mergeEntity, isOperatedOn );
 		// If managedEntity already corresponds with a different merge entity, that means
@@ -262,7 +251,7 @@ class MergeContext implements Map {
 			}
 			if ( oldOperatedOn != null ) {
 				throw new IllegalStateException(
-						"MergeContext#mergeEntityToOperatedOnFlagMap contains an merge entity " + printEntity( mergeEntity )
+						"MergeContext#mergeEntityToOperatedOnFlagMap contains a merge entity " + printEntity( mergeEntity )
 								+ ", but MergeContext#mergeToManagedEntityXref does not."
 				);
 			}
@@ -278,7 +267,7 @@ class MergeContext implements Map {
 			}
 			if ( oldOperatedOn == null ) {
 				throw new IllegalStateException(
-						"MergeContext#mergeToManagedEntityXref contained an mergeEntity " + printEntity( mergeEntity )
+						"MergeContext#mergeToManagedEntityXref contained a merge entity " + printEntity( mergeEntity )
 								+ ", but MergeContext#mergeEntityToOperatedOnFlagMap did not."
 				);
 			}

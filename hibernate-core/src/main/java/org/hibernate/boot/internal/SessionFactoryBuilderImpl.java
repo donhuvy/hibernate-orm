@@ -20,10 +20,11 @@ import org.hibernate.SessionFactory;
 import org.hibernate.SessionFactoryObserver;
 import org.hibernate.boot.SessionFactoryBuilder;
 import org.hibernate.boot.TempTableDdlTransactionHandling;
+import org.hibernate.boot.spi.BootstrapContext;
 import org.hibernate.boot.spi.MetadataImplementor;
 import org.hibernate.boot.spi.SessionFactoryBuilderImplementor;
 import org.hibernate.boot.spi.SessionFactoryOptions;
-import org.hibernate.cache.spi.QueryCacheFactory;
+import org.hibernate.cache.spi.TimestampsCacheFactory;
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.dialect.function.SQLFunction;
 import org.hibernate.hql.spi.id.MultiTableBulkIdStrategy;
@@ -35,21 +36,23 @@ import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.hibernate.tuple.entity.EntityTuplizer;
 import org.hibernate.tuple.entity.EntityTuplizerFactory;
 
-import org.jboss.logging.Logger;
-
 /**
  * @author Gail Badner
  * @author Steve Ebersole
  */
 public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplementor {
-	private static final Logger log = Logger.getLogger( SessionFactoryBuilderImpl.class );
-
 	private final MetadataImplementor metadata;
+	private final BootstrapContext bootstrapContext;
 	private final SessionFactoryOptionsBuilder optionsBuilder;
 
-	public SessionFactoryBuilderImpl(MetadataImplementor metadata) {
+	public SessionFactoryBuilderImpl(MetadataImplementor metadata, BootstrapContext bootstrapContext) {
 		this.metadata = metadata;
-		this.optionsBuilder = new SessionFactoryOptionsBuilder( metadata.getMetadataBuildingOptions().getServiceRegistry() );
+		this.bootstrapContext = bootstrapContext;
+
+		this.optionsBuilder = new SessionFactoryOptionsBuilder(
+				metadata.getMetadataBuildingOptions().getServiceRegistry(),
+				bootstrapContext
+		);
 
 		if ( metadata.getSqlFunctionMap() != null ) {
 			for ( Map.Entry<String, SQLFunction> sqlFunctionEntry : metadata.getSqlFunctionMap().entrySet() ) {
@@ -283,8 +286,8 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	}
 
 	@Override
-	public SessionFactoryBuilder applyQueryCacheFactory(QueryCacheFactory factory) {
-		this.optionsBuilder.applyQueryCacheFactory( factory );
+	public SessionFactoryBuilder applyTimestampsCacheFactory(TimestampsCacheFactory factory) {
+		this.optionsBuilder.applyTimestampsCacheFactory( factory );
 		return this;
 	}
 
@@ -429,7 +432,7 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 
 	@Override
 	public void markAsJpaBootstrap() {
-		this.optionsBuilder.markAsJpaBootstrap();
+		this.bootstrapContext.markAsJpaBootstrap();
 	}
 
 	@Override
@@ -455,7 +458,7 @@ public class SessionFactoryBuilderImpl implements SessionFactoryBuilderImplement
 	@Override
 	public SessionFactory build() {
 		metadata.validate();
-		return new SessionFactoryImpl( metadata, buildSessionFactoryOptions() );
+		return new SessionFactoryImpl( bootstrapContext, metadata, buildSessionFactoryOptions() );
 	}
 
 	@Override

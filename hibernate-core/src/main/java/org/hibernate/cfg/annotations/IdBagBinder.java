@@ -35,7 +35,7 @@ import org.hibernate.mapping.Table;
  */
 public class IdBagBinder extends BagBinder {
 	protected Collection createCollection(PersistentClass persistentClass) {
-		return new org.hibernate.mapping.IdentifierBag( getBuildingContext().getMetadataCollector(), persistentClass );
+		return new org.hibernate.mapping.IdentifierBag( getBuildingContext(), persistentClass );
 	}
 
 	@Override
@@ -65,7 +65,7 @@ public class IdBagBinder extends BagBinder {
 							null,
 							property,
 							null, //default access should not be useful
-							buildingContext.getBuildingOptions().getReflectionManager()
+							buildingContext.getBootstrapContext().getReflectionManager()
 					),
 					"id"
 			);
@@ -107,14 +107,26 @@ public class IdBagBinder extends BagBinder {
 				generatorType = null;
 			}
 
-			SecondPass secondPass = new IdGeneratorResolverSecondPass(
-					id,
-					property,
-					generatorType,
-					generator,
-					getBuildingContext()
-			);
-			buildingContext.getMetadataCollector().addSecondPass( secondPass );
+			if ( buildingContext.getBootstrapContext().getJpaCompliance().isGlobalGeneratorScopeEnabled() ) {
+				SecondPass secondPass = new IdGeneratorResolverSecondPass(
+						id,
+						property,
+						generatorType,
+						generator,
+						getBuildingContext()
+				);
+				buildingContext.getMetadataCollector().addSecondPass( secondPass );
+			}
+			else {
+				BinderHelper.makeIdGenerator(
+						id,
+						property,
+						generatorType,
+						generator,
+						getBuildingContext(),
+						localGenerators
+				);
+			}
 		}
 		return result;
 	}

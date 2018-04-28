@@ -9,7 +9,6 @@ package org.hibernate.jpa.event.internal;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-import org.hibernate.jpa.event.spi.AbstractCallback;
 import org.hibernate.jpa.event.spi.CallbackType;
 
 /**
@@ -18,11 +17,11 @@ import org.hibernate.jpa.event.spi.CallbackType;
  * @author <a href="mailto:kabir.khan@jboss.org">Kabir Khan</a>
  * @author Steve Ebersole
  */
-public class EntityCallback extends AbstractCallback {
+final class EntityCallback extends AbstractCallback {
+
 	private final Method callbackMethod;
 
-	@SuppressWarnings("WeakerAccess")
-	public EntityCallback(Method callbackMethod, CallbackType callbackType) {
+	EntityCallback(Method callbackMethod, CallbackType callbackType) {
 		super( callbackType );
 		this.callbackMethod = callbackMethod;
 	}

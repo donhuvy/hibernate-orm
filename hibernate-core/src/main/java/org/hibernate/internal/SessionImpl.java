@@ -165,6 +165,7 @@ import org.hibernate.procedure.ProcedureCallMemento;
 import org.hibernate.procedure.UnknownSqlResultSetMappingException;
 import org.hibernate.proxy.HibernateProxy;
 import org.hibernate.proxy.LazyInitializer;
+import org.hibernate.query.ImmutableEntityUpdateQueryHandlingMode;
 import org.hibernate.query.Query;
 import org.hibernate.query.criteria.internal.compile.CompilableCriteria;
 import org.hibernate.query.criteria.internal.compile.CriteriaCompiler;
@@ -181,7 +182,6 @@ import org.hibernate.resource.transaction.spi.TransactionCoordinator;
 import org.hibernate.resource.transaction.spi.TransactionStatus;
 import org.hibernate.stat.SessionStatistics;
 import org.hibernate.stat.internal.SessionStatisticsImpl;
-import org.hibernate.type.Type;
 
 import static org.hibernate.cfg.AvailableSettings.JPA_LOCK_SCOPE;
 import static org.hibernate.cfg.AvailableSettings.JPA_LOCK_TIMEOUT;
@@ -210,16 +210,14 @@ public final class SessionImpl
 	private static final boolean TRACE_ENABLED = log.isTraceEnabled();
 
 
-	private static final List<String> ENTITY_MANAGER_SPECIFIC_PROPERTIES = new ArrayList<String>();
-
-	static {
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( JPA_LOCK_SCOPE );
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( JPA_LOCK_TIMEOUT );
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( AvailableSettings.FLUSH_MODE );
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( JPA_SHARED_CACHE_RETRIEVE_MODE );
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( JPA_SHARED_CACHE_STORE_MODE );
-		ENTITY_MANAGER_SPECIFIC_PROPERTIES.add( QueryHints.SPEC_HINT_TIMEOUT );
-	}
+	private static final String[] ENTITY_MANAGER_SPECIFIC_PROPERTIES = {
+			JPA_LOCK_SCOPE,
+			JPA_LOCK_TIMEOUT,
+			AvailableSettings.FLUSH_MODE,
+			JPA_SHARED_CACHE_RETRIEVE_MODE,
+			JPA_SHARED_CACHE_STORE_MODE,
+			QueryHints.SPEC_HINT_TIMEOUT
+	};
 
 	private transient SessionOwner sessionOwner;
 
@@ -312,10 +310,10 @@ public final class SessionImpl
 	}
 
 	private void applyEntityManagerSpecificProperties() {
+		final Map<String, Object> properties = getFactory().getProperties();
 		for ( String key : ENTITY_MANAGER_SPECIFIC_PROPERTIES ) {
-			final Map<String, Object> properties = getFactory().getProperties();
-			if ( getFactory().getProperties().containsKey( key ) ) {
-				this.properties.put( key, getFactory().getProperties().get( key ) );
+			if ( properties.containsKey( key ) ) {
+				this.properties.put( key, properties.get( key ) );
 			}
 		}
 	}
@@ -405,7 +403,21 @@ public final class SessionImpl
 
 
 	@Override
+	@SuppressWarnings("StatementWithEmptyBody")
 	public void close() throws HibernateException {
+		if ( isClosed() ) {
+			if ( getFactory().getSessionFactoryOptions().getJpaCompliance().isJpaClosedComplianceEnabled() ) {
+				throw new IllegalStateException( "Illegal call to #close() on already closed Session/EntityManager" );
+			}
+
+			log.trace( "Already closed" );
+			return;
+		}
+
+		closeWithoutOpenChecks();
+	}
+
+	public void closeWithoutOpenChecks() throws HibernateException {
 		log.tracef( "Closing session [%s]", getSessionIdentifier() );
 
 		// todo : we want this check if usage is JPA, but not native Hibernate usage
@@ -517,7 +529,7 @@ public final class SessionImpl
 
 	private void managedClose() {
 		log.trace( "Automatically closing session" );
-		close();
+		closeWithoutOpenChecks();
 	}
 
 	@Override
@@ -1509,6 +1521,8 @@ public final class SessionImpl
 		HQLQueryPlan plan = getQueryPlan( query, false );
 		autoFlushIfRequired( plan.getQuerySpaces() );
 
+		verifyImmutableEntityUpdate( plan );
+
 		boolean success = false;
 		int result = 0;
 		try {
@@ -1520,6 +1534,42 @@ public final class SessionImpl
 			delayedAfterCompletion();
 		}
 		return result;
+	}
+
+	private void verifyImmutableEntityUpdate(HQLQueryPlan plan) {
+		if ( plan.isUpdate() ) {
+			for ( EntityPersister entityPersister : getSessionFactory().getMetamodel().entityPersisters().values() ) {
+				if ( !entityPersister.isMutable() ) {
+					List<Serializable> entityQuerySpaces = new ArrayList<>(
+							Arrays.asList( entityPersister.getQuerySpaces() )
+					);
+					entityQuerySpaces.retainAll( plan.getQuerySpaces() );
+
+					if ( !entityQuerySpaces.isEmpty() ) {
+						ImmutableEntityUpdateQueryHandlingMode immutableEntityUpdateQueryHandlingMode = getSessionFactory()
+								.getSessionFactoryOptions()
+								.getImmutableEntityUpdateQueryHandlingMode();
+
+						String querySpaces = Arrays.toString( entityQuerySpaces.toArray() );
+
+						switch ( immutableEntityUpdateQueryHandlingMode ) {
+							case WARNING:
+								log.immutableEntityUpdateQuery(plan.getSourceQuery(), querySpaces);
+								break;
+							case EXCEPTION:
+								throw new HibernateException(
+									"The query: [" + plan.getSourceQuery() + "] attempts to update an immutable entity: " + querySpaces
+								);
+							default:
+								throw new UnsupportedOperationException(
+									"The "+ immutableEntityUpdateQueryHandlingMode + " is not supported!"
+								);
+
+						}
+					}
+				}
+			}
+		}
 	}
 
 	@Override
@@ -2426,6 +2476,7 @@ public final class SessionImpl
 		catch (Throwable t) {
 			log.exceptionInBeforeTransactionCompletionInterceptor( t );
 		}
+		super.beforeTransactionCompletion();
 	}
 
 	@Override
@@ -2459,6 +2510,8 @@ public final class SessionImpl
 				managedClose();
 			}
 		}
+
+		super.afterTransactionCompletion( successful, delayed );
 	}
 
 	private static class LobHelperImpl implements LobHelper {
@@ -3197,6 +3250,12 @@ public final class SessionImpl
 		public Optional<T> loadOptional(Serializable naturalIdValue) {
 			return Optional.ofNullable( load( naturalIdValue ) );
 		}
+	}
+
+	@Override
+	public void startTransactionBoundary() {
+		checkOpenOrWaitingForAutoClose();
+		super.startTransactionBoundary();
 	}
 
 	@Override

@@ -6,8 +6,8 @@
  */
 
 plugins {
-  id "org.wildfly.build.provision"   version '0.0.5'
-  id "org.wildfly.build.featurepack" version '0.0.5'
+  id "org.wildfly.build.provision"   version '0.0.6'
+  id "org.wildfly.build.featurepack" version '0.0.6'
 }
 
 apply from: rootProject.file( 'gradle/base-information.gradle' )
@@ -72,17 +72,20 @@ featurepack {
 	// Just the minor ORM version, e.g. "5.3"; Is used as an alias for the exact version
 	variables['minorSlot'] = rootProject.hibernateMajorMinorVersion
 	variables['bytebuddySlot'] = bytebuddyVersion
+	variables['infinispan2lcSlot'] = 'for-orm-' + rootProject.hibernateMajorMinorVersion
 	//Dependency on another Feature Pack:
 	dependency "org.wildfly:wildfly-feature-pack:${project.wildflyVersion}" // It will assume it is "zip" by default
+	//Ensure we declare all source repositories explicitly
+	autoAddRepositories = false
 }
 
-task createFeaturePackZip( type: Zip, dependsOn: [featurepack] ) {
-	baseName 'hibernate-orm-modules'
+task createCoreFeaturePackZip( type: Zip, dependsOn: [featurepack] ) {
+	baseName 'hibernate-orm-jbossmodules'
 	from project.fpackStagingDir
 }
 
 provision {
-	dependsOn( createFeaturePackZip )
+	dependsOn( createCoreFeaturePackZip )
 	dependsOn( ":hibernate-envers:jar")
 	dependsOn( ":hibernate-core:jar")
 	configuration = file( 'wildfly-server-provisioning.xml' )
@@ -91,14 +94,17 @@ provision {
 	override( 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api' ) {
 		groupId = 'javax.persistence'
 		artifactId = 'javax.persistence-api'
-		version = '2.2'
+		version = project.jpaVersion
 	}
-	//TODO: explore overriding any other library we might need?
+	/**TODO: explore overriding any other library we might need?
+	   Example: (not currently necessary)
 	override( 'org.hibernate.common:hibernate-commons-annotations' ) {
 		version = '5.0.2.Final'
-	}
+	}*/
 	variables['wildfly.version'] = project.wildflyVersion
 	variables['hibernate-orm.version'] = rootProject.hibernateVersion
+	//Ensure we declare all source repositories explicitly
+	autoAddRepositories = false
 }
 
 dependencies {
@@ -120,7 +126,9 @@ dependencies {
 publishing {
 	publications {
 		publishedArtifacts {
-			artifact( createFeaturePackZip ) {
+			artifact( createCoreFeaturePackZip ) {
+				artifactId 'hibernate-orm-jbossmodules'
+				description 'Main feature pack of Hibernate ORM: hibernate-core and hibernate-envers, including essential dependencies such as Byte Buddy'
 			}
 		}
 	}

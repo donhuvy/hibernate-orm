@@ -71,6 +71,14 @@ hence we can save a database roundtrip.
 +
 If enabled Hibernate will initialize the entity Proxy even when accessing its identifier.
 
+`*hibernate.jpa.compliance.global_id_generators*` (e.g. `true` or `false` (default value) )::
+The JPA spec says that the scope of TableGenerator and SequenceGenerator names is global to the persistence unit (across all generator types).
++
+Traditionally, Hibernate has considered the names locally scoped.
++
+If enabled, the names used by `@TableGenerator` and `@SequenceGenerator` will be considered global so configuring two different generators
+with the same name will cause a `java.lang.IllegalArgumentException' to be thrown at boot time.
+
 [[configurations-database-connection]]
 === Database connection properties
 
@@ -392,6 +400,9 @@ The https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibern
 
 `*hibernate.bytecode.use_reflection_optimizer*` (e.g. `true` or `false` (default value))::
 Should we use reflection optimization? The reflection optimizer implements the https://docs.jboss.org/hibernate/orm/{majorMinorVersion}/javadocs/org/hibernate/bytecode/spi/ReflectionOptimizer.html[`ReflectionOptimizer`] interface and improves entity instantiation and property getter/setter calls.
+
+`*hibernate.bytecode.enforce_legacy_proxy_classnames*` (e.g. `true` or `false` (default value))::
+Some other libraries, such as Spring, used to depend on a specific naming pattern used for proxy classes generated at runtime. Set this to `true` to have proxy class names conform to the old pattern.
 
 [[configurations-query]]
 === Query settings

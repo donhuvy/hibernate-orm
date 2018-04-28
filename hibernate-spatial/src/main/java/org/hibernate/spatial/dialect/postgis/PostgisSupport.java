@@ -10,7 +10,9 @@ import java.io.Serializable;
 
 import org.hibernate.boot.model.TypeContributions;
 import org.hibernate.service.ServiceRegistry;
+import org.hibernate.spatial.GeolatteGeometryJavaTypeDescriptor;
 import org.hibernate.spatial.GeolatteGeometryType;
+import org.hibernate.spatial.JTSGeometryJavaTypeDescriptor;
 import org.hibernate.spatial.JTSGeometryType;
 import org.hibernate.spatial.SpatialAggregate;
 import org.hibernate.spatial.SpatialDialect;
@@ -28,6 +30,9 @@ public class PostgisSupport implements SpatialDialect, Serializable {
 	void contributeTypes(TypeContributions typeContributions, ServiceRegistry serviceRegistry) {
 		typeContributions.contributeType( new GeolatteGeometryType( PGGeometryTypeDescriptor.INSTANCE ) );
 		typeContributions.contributeType( new JTSGeometryType( PGGeometryTypeDescriptor.INSTANCE ) );
+
+		typeContributions.contributeJavaTypeDescriptor( GeolatteGeometryJavaTypeDescriptor.INSTANCE );
+		typeContributions.contributeJavaTypeDescriptor( JTSGeometryJavaTypeDescriptor.INSTANCE );
 	}
 
 	public PostgisFunctions functionsToRegister() {
@@ -125,11 +130,11 @@ public class PostgisSupport implements SpatialDialect, Serializable {
 	}
 
 	/**
-	 * Returns the SQL fragment when parsing an <code>HavingSridExpression</code>.
+	 * Returns the SQL fragment when parsing a <code>HavingSridExpression</code>.
 	 *
 	 * @param columnName The geometry column to test against
 	 *
-	 * @return The SQL fragment for an <code>HavingSridExpression</code>.
+	 * @return The SQL fragment for a <code>HavingSridExpression</code>.
 	 */
 	@Override
 	public String getHavingSridSQL(String columnName) {

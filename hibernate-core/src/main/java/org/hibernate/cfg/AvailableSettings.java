@@ -10,11 +10,14 @@ import java.util.function.Supplier;
 
 import javax.persistence.GeneratedValue;
 
+import org.hibernate.HibernateException;
 import org.hibernate.Transaction;
 import org.hibernate.boot.MetadataBuilder;
 import org.hibernate.boot.registry.classloading.internal.TcclLookupPrecedence;
+import org.hibernate.cache.spi.TimestampsCacheFactory;
 import org.hibernate.internal.log.DeprecationLogger;
-import org.hibernate.jpa.JpaCompliance;
+import org.hibernate.jpa.spi.JpaCompliance;
+import org.hibernate.query.ImmutableEntityUpdateQueryHandlingMode;
 import org.hibernate.query.internal.ParameterMetadataImpl;
 import org.hibernate.resource.beans.container.spi.ExtendedBeanManager;
 import org.hibernate.resource.transaction.spi.TransactionCoordinator;
@@ -849,6 +852,15 @@ public interface AvailableSettings extends org.hibernate.jpa.AvailableSettings {
 	String USE_REFLECTION_OPTIMIZER = "hibernate.bytecode.use_reflection_optimizer";
 
 	/**
+	 * Configure the global BytecodeProvider implementation to generate class names matching the
+	 * existing naming patterns.
+	 * It is not a good idea to rely on a classname to check if a class is an Hibernate proxy,
+	 * yet some frameworks are currently relying on this.
+	 * This option is disabled by default and will log a deprecation warning when enabled.
+	 */
+	String ENFORCE_LEGACY_PROXY_CLASSNAMES = "hibernate.bytecode.enforce_legacy_proxy_classnames";
+
+	/**
 	 * The classname of the HQL query parser factory
 	 */
 	String QUERY_TRANSLATOR = "hibernate.query.factory_class";
@@ -1054,7 +1066,7 @@ public interface AvailableSettings extends org.hibernate.jpa.AvailableSettings {
 	String USE_QUERY_CACHE = "hibernate.cache.use_query_cache";
 
 	/**
-	 * The {@link org.hibernate.cache.spi.QueryCacheFactory} implementation class.
+	 * The {@link TimestampsCacheFactory} implementation class.
 	 */
 	String QUERY_CACHE_FACTORY = "hibernate.cache.query_cache_factory";
 
@@ -1844,6 +1856,18 @@ public interface AvailableSettings extends org.hibernate.jpa.AvailableSettings {
 	String JPA_CACHING_COMPLIANCE = "hibernate.jpa.compliance.caching";
 
 	/**
+	 * Determine if the scope of {@link javax.persistence.TableGenerator#name()} and {@link javax.persistence.SequenceGenerator#name()} should be
+	 * considered globally or locally defined.
+	 *
+	 * If enabled, the names will considered globally scoped so defining two different generators with the same name
+	 * will cause a name collision and an exception will be thrown during the bootstrap phase.
+	 *
+	 * @see JpaCompliance#isGlobalGeneratorScopeEnabled()
+	 * @since 5.2.17
+	 */
+	String JPA_ID_GENERATOR_GLOBAL_SCOPE_COMPLIANCE = "hibernate.jpa.compliance.global_id_generators";
+
+	/**
 	 * True/False setting indicating if the value stored in the table used by the {@link javax.persistence.TableGenerator}
 	 * is the last value generated or the next value to be used.
 	 *
@@ -1860,4 +1884,42 @@ public interface AvailableSettings extends org.hibernate.jpa.AvailableSettings {
 	 * @since 5.2.13
 	 */
 	String FAIL_ON_PAGINATION_OVER_COLLECTION_FETCH = "hibernate.query.fail_on_pagination_over_collection_fetch";
+
+	/**
+	 * This setting defines how {@link org.hibernate.annotations.Immutable} entities are handled when executing a
+	 * bulk update {@link javax.persistence.Query}.
+	 *
+	 * By default, the ({@link ImmutableEntityUpdateQueryHandlingMode#WARNING}) mode is used, meaning that
+	 * a warning log message is issued when an {@link org.hibernate.annotations.Immutable} entity
+	 * is to be updated via a bulk update statement.
+	 *
+	 * If the ({@link ImmutableEntityUpdateQueryHandlingMode#EXCEPTION}) mode is used, then a
+	 * {@link HibernateException} is thrown instead.
+	 * </p>
+	 * Valid options are defined by the {@link ImmutableEntityUpdateQueryHandlingMode} enum.
+	 * </p>
+	 * The default value is {@link ImmutableEntityUpdateQueryHandlingMode#WARNING}
+	 *
+	 * @since 5.2.17
+	 * @see org.hibernate.query.ImmutableEntityUpdateQueryHandlingMode
+	 */
+	String IMMUTABLE_ENTITY_UPDATE_QUERY_HANDLING_MODE = "hibernate.query.immutable_entity_update_query_handling_mode";
+
+	/**
+	 * By default, the IN clause expands to include all bind parameter values.
+	 * </p>
+	 * However, for database systems supporting execution plan caching,
+	 * there's a better chance of hitting the cache if the number of possible IN clause parameters lowers.
+	 * </p>
+	 * For this reason, we can expand the bind parameters to power-of-two: 4, 8, 16, 32, 64.
+	 * This way, an IN clause with 5, 6, or 7 bind parameters will use the 8 IN clause,
+	 * therefore reusing its execution plan.
+	 * </p>
+	 * If you want to activate this feature, you need to set this property to {@code true}.
+	 * </p>
+	 * The default value is {@code false}.
+	 *
+	 * @since 5.2.17
+	 */
+	String IN_CLAUSE_PARAMETER_PADDING = "hibernate.query.in_clause_parameter_padding";
 }

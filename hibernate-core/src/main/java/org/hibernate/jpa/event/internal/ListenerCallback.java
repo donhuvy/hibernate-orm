@@ -9,7 +9,6 @@ package org.hibernate.jpa.event.internal;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-import org.hibernate.jpa.event.spi.AbstractCallback;
 import org.hibernate.jpa.event.spi.CallbackType;
 import org.hibernate.resource.beans.spi.ManagedBean;
 
@@ -19,12 +18,12 @@ import org.hibernate.resource.beans.spi.ManagedBean;
  * @author <a href="mailto:kabir.khan@jboss.org">Kabir Khan</a>
  * @author Steve Ebersole
  */
-public class ListenerCallback extends AbstractCallback {
+class ListenerCallback extends AbstractCallback {
+
 	private final Method callbackMethod;
 	private final ManagedBean listenerManagedBean;
 
-	@SuppressWarnings("WeakerAccess")
-	public ListenerCallback(ManagedBean listenerManagedBean, Method callbackMethod, CallbackType callbackType) {
+	ListenerCallback(ManagedBean listenerManagedBean, Method callbackMethod, CallbackType callbackType) {
 		super( callbackType );
 		this.listenerManagedBean = listenerManagedBean;
 		this.callbackMethod = callbackMethod;

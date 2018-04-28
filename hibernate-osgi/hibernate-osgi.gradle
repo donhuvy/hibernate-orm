@@ -99,8 +99,8 @@ jar {
 		instructionFirst 'Import-Package',
 			// TODO: Shouldn't have to explicitly list this, but the plugin
 			// generates it with a [1.0,2) version.
-			'javax.persistence;version="2.1.0"',
-			'javax.persistence.spi;version="2.1.0"'
+			"javax.persistence;version=\"${project.jpaVersion.osgiName}\"",
+			"javax.persistence.spi;version=\"${project.jpaVersion.osgiName}\""
 	}
 }
 
@@ -266,39 +266,6 @@ karafFeatures {
 				match {
 					group = 'org.jgroups'
 					module = 'jgroups'
-				}
-				dependency = true
-			}
-		}
-		hibernateEhcache {
-			name = 'hibernate-ehcache'
-			description = 'Feature for easily adding Ehcache-based caching support to hibernate-orm'
-			dependencyFeatureNames = ['hibernate-orm']
-			projects = [rootProject.childProjects.'hibernate-ehcache']
-			bundle {
-				match group: 'org.hibernate', module: 'hibernate-core'
-				include = false
-			}
-			bundle {
-				match group: 'org.hibernate', module: 'hibernate-osgi'
-				include = false
-			}
-			bundle {
-				match group: 'org.jboss.logging', module: 'jboss-logging'
-				include = false
-			}
-			bundle {
-				match group: 'org.jboss.logging', module: 'jboss-logging-annotations'
-				include = false
-			}
-			bundle {
-				match group: 'org.jboss.logging', module: 'jboss-logging-processor'
-				include = false
-			}
-			bundle {
-				match {
-					group = 'net.sf.ehcache'
-					module = 'ehcache'
 				}
 				dependency = true
 			}

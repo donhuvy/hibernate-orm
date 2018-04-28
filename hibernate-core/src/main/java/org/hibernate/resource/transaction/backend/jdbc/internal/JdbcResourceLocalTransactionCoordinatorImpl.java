@@ -11,12 +11,11 @@ import java.util.List;
 import javax.persistence.RollbackException;
 import javax.transaction.Status;
 
-import org.hibernate.TransactionException;
 import org.hibernate.engine.jdbc.spi.JdbcServices;
 import org.hibernate.engine.transaction.spi.IsolationDelegate;
 import org.hibernate.engine.transaction.spi.TransactionObserver;
 import org.hibernate.internal.CoreMessageLogger;
-import org.hibernate.jpa.JpaCompliance;
+import org.hibernate.jpa.spi.JpaCompliance;
 import org.hibernate.resource.jdbc.spi.JdbcSessionOwner;
 import org.hibernate.resource.transaction.backend.jdbc.spi.JdbcResourceTransaction;
 import org.hibernate.resource.transaction.backend.jdbc.spi.JdbcResourceTransactionAccess;
@@ -158,7 +157,15 @@ public class JdbcResourceLocalTransactionCoordinatorImpl implements TransactionC
 		if(this.timeOut > 0) {
 			transactionCoordinatorOwner.setTransactionTimeOut( this.timeOut );
 		}
+
+
+		// report entering into a "transactional context"
+		transactionCoordinatorOwner.startTransactionBoundary();
+
+		// trigger the Transaction-API-only after-begin callback
 		transactionCoordinatorOwner.afterTransactionBegin();
+
+		// notify all registered observers
 		for ( TransactionObserver observer : observers() ) {
 			observer.afterBegin();
 		}
@@ -281,10 +288,15 @@ public class JdbcResourceLocalTransactionCoordinatorImpl implements TransactionC
 
 		@Override
 		public void rollback() {
-			if ( rollbackOnly || getStatus() == TransactionStatus.ACTIVE ) {
+			try {
+				TransactionStatus status = jdbcResourceTransaction.getStatus();
+				if ( ( rollbackOnly && status != TransactionStatus.NOT_ACTIVE ) || status == TransactionStatus.ACTIVE ) {
+					jdbcResourceTransaction.rollback();
+					JdbcResourceLocalTransactionCoordinatorImpl.this.afterCompletionCallback( false );
+				}
+			}
+			finally {
 				rollbackOnly = false;
-				jdbcResourceTransaction.rollback();
-				JdbcResourceLocalTransactionCoordinatorImpl.this.afterCompletionCallback( false );
 			}
 
 			// no-op otherwise.

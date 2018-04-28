@@ -26,6 +26,7 @@ import org.hibernate.boot.model.convert.spi.ConverterDescriptor;
 import org.hibernate.boot.model.naming.Identifier;
 import org.hibernate.boot.model.relational.AuxiliaryDatabaseObject;
 import org.hibernate.boot.model.relational.Database;
+import org.hibernate.boot.model.relational.QualifiedTableName;
 import org.hibernate.boot.model.source.spi.LocalMetadataBuildingContext;
 import org.hibernate.cfg.AnnotatedClassType;
 import org.hibernate.cfg.AttributeConverterDefinition;
@@ -47,7 +48,6 @@ import org.hibernate.mapping.Join;
 import org.hibernate.mapping.MappedSuperclass;
 import org.hibernate.mapping.PersistentClass;
 import org.hibernate.mapping.Table;
-import org.hibernate.type.TypeResolver;
 
 /**
  * An in-flight representation of Metadata while Metadata is being built.
@@ -57,6 +57,7 @@ import org.hibernate.type.TypeResolver;
  * @since 5.0
  */
 public interface InFlightMetadataCollector extends Mapping, MetadataImplementor {
+	BootstrapContext getBootstrapContext();
 
 	/**
 	 * Add the PersistentClass for an entity mapping.
@@ -205,10 +206,6 @@ public interface InFlightMetadataCollector extends Mapping, MetadataImplementor 
 
 	void addFetchProfile(FetchProfile profile);
 
-	TypeResolver getTypeResolver();
-
-	Database getDatabase();
-
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// make sure these are account for better in metamodel
 
@@ -229,7 +226,7 @@ public interface InFlightMetadataCollector extends Mapping, MetadataImplementor 
 		addAttributeConverter(
 				new InstanceBasedConverterDescriptor(
 						converter.getAttributeConverter(),
-						getClassmateContext()
+						getBootstrapContext().getClassmateContext()
 				)
 		);
 	}
@@ -301,6 +298,15 @@ public interface InFlightMetadataCollector extends Mapping, MetadataImplementor 
 	NaturalIdUniqueKeyBinder locateNaturalIdUniqueKeyBinder(String entityName);
 	void registerNaturalIdUniqueKeyBinder(String entityName, NaturalIdUniqueKeyBinder ukBinder);
 
+	/**
+	 * Access to the shared Classmate objects used throughout Hibernate's
+	 * bootstrap process.
+	 *
+	 * @return Access to the shared Classmate delegates.
+	 *
+	 * @deprecated Use {@link BootstrapContext#getClassmateContext()} instead.
+	 */
+	@Deprecated
 	ClassmateContext getClassmateContext();
 
 	interface DelayedPropertyReferenceHandler extends Serializable {
@@ -323,7 +329,7 @@ public interface InFlightMetadataCollector extends Mapping, MetadataImplementor 
 
 	interface EntityTableXref {
 		void addSecondaryTable(LocalMetadataBuildingContext buildingContext, Identifier logicalName, Join secondaryTableJoin);
-		void addSecondaryTable(Identifier logicalName, Join secondaryTableJoin);
+		void addSecondaryTable(QualifiedTableName logicalName, Join secondaryTableJoin);
 		Table resolveTable(Identifier tableName);
 		Table getPrimaryTable();
 		Join locateJoin(Identifier tableName);

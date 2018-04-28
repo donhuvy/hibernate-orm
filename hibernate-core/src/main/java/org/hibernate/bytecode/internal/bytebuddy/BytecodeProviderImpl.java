@@ -11,7 +11,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.concurrent.Callable;
 
-import net.bytebuddy.TypeCache;
 import org.hibernate.HibernateException;
 import org.hibernate.bytecode.enhance.internal.bytebuddy.EnhancerImpl;
 import org.hibernate.bytecode.enhance.spi.EnhancementContext;
@@ -20,11 +19,9 @@ import org.hibernate.bytecode.spi.BytecodeProvider;
 import org.hibernate.bytecode.spi.ProxyFactoryFactory;
 import org.hibernate.bytecode.spi.ReflectionOptimizer;
 
-import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.NamingStrategy;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodCall;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
@@ -35,16 +32,22 @@ import net.bytebuddy.implementation.bytecode.assign.reference.ReferenceTypeAware
 import net.bytebuddy.jar.asm.MethodVisitor;
 import net.bytebuddy.jar.asm.Opcodes;
 import net.bytebuddy.jar.asm.Type;
+import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatchers;
 
 public class BytecodeProviderImpl implements BytecodeProvider {
 
-	private final TypeCache<String> FAST_CLASSES = new TypeCache.WithInlineExpunction<String>(TypeCache.Sort.SOFT);
-	private final TypeCache<String> BULK_ACCESSORS = new TypeCache.WithInlineExpunction<String>(TypeCache.Sort.SOFT);
+	private static final ByteBuddyState bytebuddy = new ByteBuddyState();
+	private static final NamingStrategy.SuffixingRandom instantiatorName = new NamingStrategy.SuffixingRandom( "HibernateInstantiator" );
+	private static final NamingStrategy.SuffixingRandom optimizerName = new NamingStrategy.SuffixingRandom( "HibernateAccessOptimizer" );
+	private static final ElementMatcher.Junction newInstanceMethodName = ElementMatchers.named( "newInstance" );
+	private static final ElementMatcher.Junction getPropertyValuesMethodName = ElementMatchers.named( "getPropertyValues" );
+	private static final ElementMatcher.Junction setPropertyValuesMethodName = ElementMatchers.named( "setPropertyValues" );
+	private static final ElementMatcher.Junction getPropertyNamesMethodName = ElementMatchers.named( "getPropertyNames" );
 
 	@Override
 	public ProxyFactoryFactory getProxyFactoryFactory() {
-		return new ProxyFactoryFactoryImpl();
+		return new ProxyFactoryFactoryImpl( bytebuddy );
 	}
 
 	@Override
@@ -58,41 +61,27 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 		findAccessors( clazz, getterNames, setterNames, types, getters, setters );
 		final Constructor<?> constructor = findConstructor( clazz );
 
-		Class fastClass = FAST_CLASSES.findOrInsert( clazz.getClassLoader(), clazz.getName(), new Callable<Class<?>>() {
-			@Override
-			public Class<?> call() throws Exception {
-				return new ByteBuddy()
-						.with(TypeValidation.DISABLED)
-						.with(new NamingStrategy.SuffixingRandom("HibernateInstantiator"))
-						.subclass(ReflectionOptimizer.InstantiationOptimizer.class)
-						.method(ElementMatchers.named("newInstance"))
-						.intercept(MethodCall.construct(constructor))
-						.make()
-						.load(clazz.getClassLoader())
-						.getLoaded();
-			}
-		}, FAST_CLASSES);
+		final Class fastClass = bytebuddy.getCurrentyByteBuddy()
+				.with( instantiatorName )
+				.subclass( ReflectionOptimizer.InstantiationOptimizer.class )
+				.method( newInstanceMethodName )
+				.intercept( MethodCall.construct( constructor ) )
+				.make()
+				.load( clazz.getClassLoader() )
+				.getLoaded();
 
-		fastClass = FAST_CLASSES.insert( clazz.getClassLoader(), clazz.getName(), fastClass );
-
-		Class bulkAccessor = BULK_ACCESSORS.findOrInsert( clazz.getClassLoader(), clazz.getName(), new Callable<Class<?>>() {
-			@Override
-			public Class<?> call() throws Exception {
-				return new ByteBuddy()
-						.with(TypeValidation.DISABLED)
-						.with(new NamingStrategy.SuffixingRandom("HibernateAccessOptimizer"))
-						.subclass(ReflectionOptimizer.AccessOptimizer.class)
-						.method(ElementMatchers.named("getPropertyValues"))
-						.intercept(new Implementation.Simple(new GetPropertyValues(clazz, getters)))
-						.method(ElementMatchers.named("setPropertyValues"))
-						.intercept(new Implementation.Simple(new SetPropertyValues(clazz, setters)))
-						.method(ElementMatchers.named("getPropertyNames"))
-						.intercept(MethodCall.call(new CloningPropertyCall(getterNames)))
-						.make()
-						.load(clazz.getClassLoader())
-						.getLoaded();
-			}
-		}, BULK_ACCESSORS);
+		final Class bulkAccessor = bytebuddy.getCurrentyByteBuddy()
+				.with( optimizerName )
+				.subclass( ReflectionOptimizer.AccessOptimizer.class )
+				.method( getPropertyValuesMethodName )
+				.intercept( new Implementation.Simple( new GetPropertyValues( clazz, getters ) ) )
+				.method( setPropertyValuesMethodName )
+				.intercept( new Implementation.Simple( new SetPropertyValues( clazz, setters ) ) )
+				.method( getPropertyNamesMethodName )
+				.intercept( MethodCall.call( new CloningPropertyCall( getterNames ) ) )
+				.make()
+				.load( clazz.getClassLoader() )
+				.getLoaded();
 
 		try {
 			return new ReflectionOptimizerImpl(
@@ -272,6 +261,11 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 
 	@Override
 	public Enhancer getEnhancer(EnhancementContext enhancementContext) {
-		return new EnhancerImpl( enhancementContext );
+		return new EnhancerImpl( enhancementContext, bytebuddy );
 	}
+
+	public void resetCaches() {
+		bytebuddy.clearState();
+	}
+
 }

@@ -31,7 +31,6 @@ import javax.persistence.SynchronizationType;
 import javax.persistence.criteria.CriteriaBuilder;
 import javax.persistence.spi.PersistenceUnitTransactionType;
 
-import org.hibernate.AssertionFailure;
 import org.hibernate.ConnectionAcquisitionMode;
 import org.hibernate.ConnectionReleaseMode;
 import org.hibernate.CustomEntityDirtinessStrategy;
@@ -51,8 +50,10 @@ import org.hibernate.TypeHelper;
 import org.hibernate.boot.cfgxml.spi.CfgXmlAccessService;
 import org.hibernate.boot.cfgxml.spi.LoadedConfig;
 import org.hibernate.boot.registry.classloading.spi.ClassLoaderService;
+import org.hibernate.boot.spi.BootstrapContext;
 import org.hibernate.boot.spi.MetadataImplementor;
 import org.hibernate.boot.spi.SessionFactoryOptions;
+import org.hibernate.cache.spi.CacheImplementor;
 import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.cfg.Environment;
 import org.hibernate.cfg.Settings;
@@ -73,7 +74,6 @@ import org.hibernate.engine.profile.Fetch;
 import org.hibernate.engine.profile.FetchProfile;
 import org.hibernate.engine.query.spi.QueryPlanCache;
 import org.hibernate.engine.query.spi.ReturnMetadata;
-import org.hibernate.engine.spi.CacheImplementor;
 import org.hibernate.engine.spi.FilterDefinition;
 import org.hibernate.engine.spi.NamedQueryDefinition;
 import org.hibernate.engine.spi.NamedQueryDefinitionBuilder;
@@ -87,7 +87,6 @@ import org.hibernate.event.service.spi.EventListenerGroup;
 import org.hibernate.event.service.spi.EventListenerRegistry;
 import org.hibernate.event.spi.EventType;
 import org.hibernate.id.IdentifierGenerator;
-import org.hibernate.id.UUIDGenerator;
 import org.hibernate.id.factory.IdentifierGeneratorFactory;
 import org.hibernate.integrator.spi.Integrator;
 import org.hibernate.integrator.spi.IntegratorService;
@@ -155,10 +154,9 @@ import static org.hibernate.metamodel.internal.JpaMetaModelPopulationSetting.det
 public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	private static final CoreMessageLogger LOG = CoreLogging.messageLogger( SessionFactoryImpl.class );
 
-	private static final IdentifierGenerator UUID_GENERATOR = UUIDGenerator.buildSessionFactoryUniqueIdentifierGenerator();
-
 	private final String name;
 	private final String uuid;
+
 	private transient boolean isClosed;
 
 	private final transient SessionFactoryObserverChain observer = new SessionFactoryObserverChain();
@@ -174,7 +172,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 
 	// todo : org.hibernate.jpa.boot.spi.PersistenceUnitDescriptor too?
 
-	private final transient MetamodelImpl metamodel;
+	private final transient MetamodelImplementor metamodel;
 	private final transient CriteriaBuilderImpl criteriaBuilder;
 	private final PersistenceUnitUtil jpaPersistenceUnitUtil;
 	private final transient CacheImplementor cacheAccess;
@@ -190,20 +188,23 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	private final transient Map<String, FilterDefinition> filters;
 	private final transient Map<String, FetchProfile> fetchProfiles;
 
-	private final transient TypeResolver typeResolver;
 	private final transient TypeHelper typeHelper;
-	private transient StatisticsImplementor statisticsImplementor;
 
-
-	public SessionFactoryImpl(final MetadataImplementor metadata, SessionFactoryOptions options) {
+	public SessionFactoryImpl(
+			final BootstrapContext bootstrapContext,
+			final MetadataImplementor metadata,
+			SessionFactoryOptions options) {
 		LOG.debug( "Building session factory" );
 
 		this.sessionFactoryOptions = options;
 		this.settings = new Settings( options, metadata );
 
-		this.serviceRegistry = options.getServiceRegistry()
+		this.serviceRegistry = options
+				.getServiceRegistry()
 				.getService( SessionFactoryServiceRegistryFactory.class )
-				.buildServiceRegistry( this, options );
+				.buildServiceRegistry( this, bootstrapContext, options );
+
+		prepareEventListeners( metadata );
 
 		final CfgXmlAccessService cfgXmlAccessService = serviceRegistry.getService( CfgXmlAccessService.class );
 
@@ -216,12 +217,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 		}
 
 		this.name = sfName;
-		try {
-			uuid = (String) UUID_GENERATOR.generate( null, null );
-		}
-		catch (Exception e) {
-			throw new AssertionFailure("Could not generate UUID");
-		}
+		this.uuid = options.getUuid();
 
 		final JdbcServices jdbcServices = serviceRegistry.getService( JdbcServices.class );
 
@@ -248,8 +244,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 			this.observer.addObserver( sessionFactoryObserver );
 		}
 
-		this.typeResolver = metadata.getTypeResolver().scope( this );
-		this.typeHelper = new TypeLocatorImpl( typeResolver );
+		this.typeHelper = new TypeLocatorImpl( metadata.getTypeConfiguration().getTypeResolver() );
 
 		this.filters = new HashMap<>();
 		this.filters.putAll( metadata.getFilterDefinitions() );
@@ -296,8 +291,11 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 
 			LOG.debug( "Instantiated session factory" );
 
-			this.metamodel = new MetamodelImpl( this );
-			this.metamodel.initialize( metadata, determineJpaMetaModelPopulationSetting( properties ) );
+			this.metamodel = metadata.getTypeConfiguration().scope( this , bootstrapContext);
+			( (MetamodelImpl) this.metamodel ).initialize(
+					metadata,
+					determineJpaMetaModelPopulationSetting( properties )
+			);
 
 			//Named Queries:
 			this.namedQueryRepository = metadata.buildNamedQueryRepository( this );
@@ -374,7 +372,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 			this.observer.sessionFactoryCreated( this );
 
 			SessionFactoryRegistry.INSTANCE.addSessionFactory(
-					uuid,
+					getUuid(),
 					name,
 					settings.isSessionFactoryNameAlsoJndiName(),
 					this,
@@ -388,6 +386,41 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 			}
 			close();
 			throw e;
+		}
+	}
+
+	private void prepareEventListeners(MetadataImplementor metadata) {
+		final EventListenerRegistry eventListenerRegistry = serviceRegistry.getService( EventListenerRegistry.class );
+		final ConfigurationService cfgService = serviceRegistry.getService( ConfigurationService.class );
+		final ClassLoaderService classLoaderService = serviceRegistry.getService( ClassLoaderService.class );
+
+		eventListenerRegistry.prepare( metadata );
+
+		for ( Map.Entry entry : ( (Map<?, ?>) cfgService.getSettings() ).entrySet() ) {
+			if ( !String.class.isInstance( entry.getKey() ) ) {
+				continue;
+			}
+			final String propertyName = (String) entry.getKey();
+			if ( !propertyName.startsWith( org.hibernate.jpa.AvailableSettings.EVENT_LISTENER_PREFIX ) ) {
+				continue;
+			}
+			final String eventTypeName = propertyName.substring(
+					org.hibernate.jpa.AvailableSettings.EVENT_LISTENER_PREFIX.length() + 1
+			);
+			final EventType eventType = EventType.resolveEventTypeByName( eventTypeName );
+			final EventListenerGroup eventListenerGroup = eventListenerRegistry.getEventListenerGroup( eventType );
+			for ( String listenerImpl : ( (String) entry.getValue() ).split( " ," ) ) {
+				eventListenerGroup.appendListener( instantiate( listenerImpl, classLoaderService ) );
+			}
+		}
+	}
+
+	private Object instantiate(String listenerImpl, ClassLoaderService classLoaderService) {
+		try {
+			return classLoaderService.classForName( listenerImpl ).newInstance();
+		}
+		catch (Exception e) {
+			throw new HibernateException( "Could not instantiate requested listener [" + listenerImpl + "]", e );
 		}
 	}
 
@@ -521,8 +554,16 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 		return null;
 	}
 
+	/**
+	 * Retrieve the {@link Type} resolver associated with this factory.
+	 *
+	 * @return The type resolver
+	 *
+	 * @deprecated (since 5.3) No replacement, access to and handling of Types will be much different in 6.0
+	 */
+	@Deprecated
 	public TypeResolver getTypeResolver() {
-		return typeResolver;
+		return metamodel.getTypeConfiguration().getTypeResolver();
 	}
 
 	public QueryPlanCache getQueryPlanCache() {
@@ -538,7 +579,10 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 		return new DeserializationResolver() {
 			@Override
 			public SessionFactoryImplementor resolve() {
-				return (SessionFactoryImplementor) SessionFactoryRegistry.INSTANCE.findSessionFactory( uuid, name );
+				return (SessionFactoryImplementor) SessionFactoryRegistry.INSTANCE.findSessionFactory(
+						uuid,
+						name
+				);
 			}
 		};
 	}
@@ -647,11 +691,6 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	}
 
 	@Override
-	public Map getAllSecondLevelCacheRegions() {
-		return null;
-	}
-
-	@Override
 	public SessionFactoryOptions getSessionFactoryOptions() {
 		return sessionFactoryOptions;
 	}
@@ -739,6 +778,8 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	 * @throws HibernateException
 	 */
 	public void close() throws HibernateException {
+		//This is an idempotent operation so we can do it even before the checks (it won't hurt):
+		Environment.getBytecodeProvider().resetCaches();
 		if ( isClosed ) {
 			if ( getSessionFactoryOptions().getJpaCompliance().isJpaClosedComplianceEnabled() ) {
 				throw new IllegalStateException( "EntityManagerFactory is already closed" );
@@ -775,7 +816,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 		}
 
 		SessionFactoryRegistry.INSTANCE.removeSessionFactory(
-				uuid,
+				getUuid(),
 				name,
 				settings.isSessionFactoryNameAlsoJndiName(),
 				serviceRegistry.getService( JndiService.class )
@@ -1509,7 +1550,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	 * @throws IOException Can be thrown by the stream
 	 */
 	private void writeObject(ObjectOutputStream out) throws IOException {
-		LOG.debugf( "Serializing: %s", uuid );
+		LOG.debugf( "Serializing: %s", getUuid() );
 		out.defaultWriteObject();
 		LOG.trace( "Serialized" );
 	}
@@ -1525,7 +1566,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
 		LOG.trace( "Deserializing" );
 		in.defaultReadObject();
-		LOG.debugf( "Deserialized: %s", uuid );
+		LOG.debugf( "Deserialized: %s", getUuid() );
 	}
 
 	/**
@@ -1539,7 +1580,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	 */
 	private Object readResolve() throws InvalidObjectException {
 		LOG.trace( "Resolving serialized SessionFactory" );
-		return locateSessionFactoryOnDeserialization( uuid, name );
+		return locateSessionFactoryOnDeserialization( getUuid(), name );
 	}
 
 	private static SessionFactory locateSessionFactoryOnDeserialization(String uuid, String name) throws InvalidObjectException{
@@ -1569,7 +1610,7 @@ public final class SessionFactoryImpl implements SessionFactoryImplementor {
 	 * @throws IOException Indicates problems writing out the serial data stream
 	 */
 	void serialize(ObjectOutputStream oos) throws IOException {
-		oos.writeUTF( uuid );
+		oos.writeUTF( getUuid() );
 		oos.writeBoolean( name != null );
 		if ( name != null ) {
 			oos.writeUTF( name );

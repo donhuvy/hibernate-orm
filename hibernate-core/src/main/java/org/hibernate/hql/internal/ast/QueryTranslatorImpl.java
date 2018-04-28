@@ -38,9 +38,11 @@ import org.hibernate.hql.internal.ast.tree.FromElement;
 import org.hibernate.hql.internal.ast.tree.InsertStatement;
 import org.hibernate.hql.internal.ast.tree.QueryNode;
 import org.hibernate.hql.internal.ast.tree.Statement;
+import org.hibernate.hql.internal.ast.tree.UpdateStatement;
 import org.hibernate.hql.internal.ast.util.ASTPrinter;
 import org.hibernate.hql.internal.ast.util.ASTUtil;
 import org.hibernate.hql.internal.ast.util.NodeTraverser;
+import org.hibernate.hql.internal.ast.util.TokenPrinters;
 import org.hibernate.hql.spi.FilterTranslator;
 import org.hibernate.hql.spi.ParameterTranslations;
 import org.hibernate.internal.CoreMessageLogger;
@@ -261,8 +263,6 @@ public class QueryTranslatorImpl implements FilterTranslator {
 		}
 	}
 
-	private static final ASTPrinter SQL_TOKEN_PRINTER = new ASTPrinter( SqlTokenTypes.class );
-
 	private HqlSqlWalker analyze(HqlParser parser, String collectionRole) throws QueryException, RecognitionException {
 		final HqlSqlWalker w = new HqlSqlWalker( this, factory, parser, tokenReplacements, collectionRole );
 		final AST hqlAst = parser.getAST();
@@ -271,7 +271,7 @@ public class QueryTranslatorImpl implements FilterTranslator {
 		w.statement( hqlAst );
 
 		if ( LOG.isDebugEnabled() ) {
-			LOG.debug( SQL_TOKEN_PRINTER.showAsString( w.getAST(), "--- SQL AST ---" ) );
+			LOG.debug( TokenPrinters.SQL_TOKEN_PRINTER.showAsString( w.getAST(), "--- SQL AST ---" ) );
 		}
 
 		w.getParseErrorHandler().throwQueryException();
@@ -303,11 +303,9 @@ public class QueryTranslatorImpl implements FilterTranslator {
 		return parser;
 	}
 
-	private static final ASTPrinter HQL_TOKEN_PRINTER = new ASTPrinter( HqlTokenTypes.class );
-
 	void showHqlAst(AST hqlAst) {
 		if ( LOG.isDebugEnabled() ) {
-			LOG.debug( HQL_TOKEN_PRINTER.showAsString( hqlAst, "--- HQL AST ---" ) );
+			LOG.debug( TokenPrinters.HQL_TOKEN_PRINTER.showAsString( hqlAst, "--- HQL AST ---" ) );
 		}
 	}
 
@@ -503,6 +501,10 @@ public class QueryTranslatorImpl implements FilterTranslator {
 		return sqlAst.needsExecutor();
 	}
 	@Override
+	public boolean isUpdateStatement() {
+		return SqlTokenTypes.UPDATE == sqlAst.getStatementType();
+	}
+	@Override
 	public void validateScrollability() throws HibernateException {
 		// Impl Note: allows multiple collection fetches as long as the
 		// entire fecthed graph still "points back" to a single
@@ -551,7 +553,7 @@ public class QueryTranslatorImpl implements FilterTranslator {
 		if ( primaryOrdering != null ) {
 			// TODO : this is a bit dodgy, come up with a better way to check this (plus see above comment)
 			String [] idColNames = owner.getQueryable().getIdentifierColumnNames();
-			String expectedPrimaryOrderSeq = StringHelper.join(
+			String expectedPrimaryOrderSeq = String.join(
 					", ",
 					StringHelper.qualify( owner.getTableAlias(), idColNames )
 			);

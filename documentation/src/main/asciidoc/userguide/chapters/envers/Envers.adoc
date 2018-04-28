@@ -972,6 +972,40 @@ include::{extrasdir}/envers-tracking-properties-changes-queries-at-revision-exam
 ----
 ====
 
+[[envers-tracking-obtain-properties-changed-queries]]
+=== Querying for revisions of entity including property names that were modified
+
+[NOTE]
+====
+This feature described here is still considered experimental.
+It is subject to change in future releases based on user feedback to improve its usefulness.
+====
+
+Sometimes it may be useful to query entity revisions and also determine all the properties of that revision which
+were modified without having to issue multiple queries using `hasChanged()` and `hasNotChanged()` criteria.
+
+You can now obtain this information easily by using the following query:
+
+.Querying entity revisions including property names modified.
+====
+[source, JAVA, indent=0]
+----
+List results  = AuditReaderFactory.get( entityManager )
+  .createQuery()
+  .forRevisionsOfEntityWithChanges( Customer.class, false )
+  .add( AuditEntity.id().eq( 1L ) )
+  .getResultList();
+
+for ( Object entry : results ) {
+  final Object[] array = (Object[]) entry;
+  final Set<String> propertiesChanged = (Set<String>) array[3];
+  for ( String propertyName : propertiesChanged ) {
+    /* Do something useful with the modified property `propertyName` */
+  }
+}
+----
+====
+
 [[envers-tracking-modified-entities-queries]]
 === Querying for entity types modified in a given revision
 
@@ -1151,6 +1185,31 @@ include::{sourcedir}/QueryAuditAdressCountryTest.java[tags=envers-querying-entit
 include::{extrasdir}/envers-querying-entity-relation-nested-join-multiple-restrictions-combined.sql[]
 ----
 ====
+
+[[envers-querying-revision-entities]]
+=== Querying for revision information without loading entities
+
+It may sometimes be useful to load information about revisions to find out who performed specific revisions or
+to know what entity names were modified but the change log about the related audited entities isn't needed.
+This API allows an efficient way to get the revision information entity log without instantiating the actual
+entities themselves.
+
+Here is a simple example:
+
+[source,java]
+----
+AuditQuery query = getAuditReader().createQuery()
+    .forRevisionsOfEntity( DefaultRevisionEntity.class, true )
+    .add( AuditEntity.revisionNumber().between( 1, 25 ) );
+----
+
+This query will return all revision information entities for revisions between 1 and 25 including those which are
+related to deletions.  If deletions are not of interest, you would pass `false` as the second argument.
+
+Note this this query uses the `DefaultRevisionEntity` class type.  The class provided will vary depending on the
+configuration properties used to configure Envers or if you supply your own revision entity.  Typically users who
+will use this API will likely be providing a custom revision entity implementation to obtain custom information
+being maintained per revision.
 
 [[envers-conditional-auditing]]
 === Conditional auditing
